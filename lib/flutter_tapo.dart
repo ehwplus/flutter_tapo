@@ -1,6 +1,6 @@
-export 'package:flutter_tapo/flutter_tapo/tapo_api_client.dart';
-export 'package:flutter_tapo/flutter_tapo/http_tapo_api_client.dart';
-export 'package:flutter_tapo/flutter_tapo/tapo_device_info.dart';
-export 'package:flutter_tapo/flutter_tapo/tapo_energy_usage.dart';
-export 'package:flutter_tapo/flutter_tapo/tapo_encoding.dart';
-export 'package:flutter_tapo/flutter_tapo/tapo_exception.dart';
+export 'package:flutter_tapo/flutter_tapo/network/tapo_api_client.dart';
+export 'package:flutter_tapo/flutter_tapo/network/http_tapo_api_client.dart';
+export 'package:flutter_tapo/flutter_tapo/model/tapo_device_info.dart';
+export 'package:flutter_tapo/flutter_tapo/model/tapo_energy_usage.dart';
+export 'package:flutter_tapo/flutter_tapo/util/tapo_encoding.dart';
+export 'package:flutter_tapo/flutter_tapo/core/tapo_exception.dart';

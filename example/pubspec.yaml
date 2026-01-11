@@ -35,8 +35,6 @@ dependencies:
   flutter_tapo:
     path: ../
 
-  http: ^1.2.2
-
 dev_dependencies:
   flutter_test:
     sdk: flutter

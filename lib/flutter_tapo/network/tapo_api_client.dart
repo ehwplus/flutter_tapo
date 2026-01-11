@@ -3,12 +3,12 @@ import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 
-import 'tapo_cipher.dart';
-import 'tapo_device_info.dart';
-import 'tapo_encoding.dart';
-import 'tapo_energy_usage.dart';
-import 'tapo_exception.dart';
-import 'tapo_klap.dart';
+import '../core/tapo_exception.dart';
+import '../crypto/tapo_cipher.dart';
+import '../model/tapo_device_info.dart';
+import '../model/tapo_energy_usage.dart';
+import '../protocol/tapo_klap.dart';
+import '../util/tapo_encoding.dart';
 
 abstract class TapoApiClient {
   TapoApiClient({required this.host, this.port = 80, this.useHttps = false, Uuid? uuid})
