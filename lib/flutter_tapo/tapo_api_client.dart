@@ -29,6 +29,8 @@ abstract class TapoApiClient {
   TapoProtocolType? _protocolType;
   TapoKlapSession? _klapSession;
   String _klapBasePath = '/app';
+  String? _klapScheme;
+  int? _klapPort;
 
   String? get token => _token;
   bool get isAuthenticated {
@@ -339,24 +341,32 @@ abstract class TapoApiClient {
     );
   }
 
-  Uri _klapHandshakeUri(String path, {String? basePath}) {
-    final scheme = useHttps ? 'https' : 'http';
+  Uri _klapHandshakeUri(
+    String path, {
+    String? basePath,
+    String? scheme,
+    int? portOverride,
+  }) {
+    final resolvedScheme =
+        scheme ?? _klapScheme ?? (useHttps ? 'https' : 'http');
+    final resolvedPort = portOverride ?? _klapPort ?? port;
     final resolvedPath = _joinKlapPath(basePath ?? _klapBasePath, path);
     return Uri(
-      scheme: scheme,
+      scheme: resolvedScheme,
       host: host,
-      port: port,
+      port: resolvedPort,
       path: resolvedPath,
     );
   }
 
   Uri _klapRequestUri(int seq) {
-    final scheme = useHttps ? 'https' : 'http';
+    final resolvedScheme = _klapScheme ?? (useHttps ? 'https' : 'http');
+    final resolvedPort = _klapPort ?? port;
     final resolvedPath = _joinKlapPath(_klapBasePath, 'request');
     return Uri(
-      scheme: scheme,
+      scheme: resolvedScheme,
       host: host,
-      port: port,
+      port: resolvedPort,
       path: resolvedPath,
       queryParameters: {
         'seq': seq.toString(),
@@ -500,8 +510,17 @@ abstract class TapoApiClient {
       if (_cookie != null) {
         log('Component negotiation cookie: $_cookie');
       }
+      Map<String, dynamic> data;
+      try {
+        data = _decodeJson(response.body);
+      } on FormatException catch (_) {
+        log('Component negotiation returned non-JSON body.');
+        return TapoProtocolType.klap;
+      } on TapoProtocolException catch (_) {
+        log('Component negotiation returned unexpected body.');
+        return TapoProtocolType.klap;
+      }
 
-      final data = _decodeJson(response.body);
       final rawCode = data['error_code'];
       final code =
           rawCode is int ? rawCode : int.tryParse(rawCode.toString()) ?? 0;
@@ -528,37 +547,51 @@ abstract class TapoApiClient {
       TapoKlapRevision.v2,
       TapoKlapRevision.v1,
     ];
+    final transports = _buildKlapTransports();
 
     TapoApiException? lastApiError;
     TapoProtocolException? lastProtocolError;
+    Object? lastUnknownError;
 
     for (final basePath in basePaths) {
       for (final revision in revisions) {
-        log('KLAP handshake attempt (${revision.label}) using base "${basePath.isEmpty ? "/" : basePath}"');
-        try {
-          final result = await _klapHandshakeAttempt(
-            email: email,
-            password: password,
-            revision: revision,
-            basePath: basePath,
+        for (final transport in transports) {
+          log(
+            'KLAP handshake attempt (${revision.label}) using base "${basePath.isEmpty ? "/" : basePath}" '
+            'via ${transport.scheme}:${transport.port}',
           );
+          try {
+            final result = await _klapHandshakeAttempt(
+              email: email,
+              password: password,
+              revision: revision,
+              basePath: basePath,
+              scheme: transport.scheme,
+              portOverride: transport.port,
+            );
 
-          _klapBasePath = basePath.isEmpty ? '' : basePath;
-          _klapSession = TapoKlapSession(
-            cookie: _cookie ?? '',
-            cipher: TapoKlapCipher.create(
-              localSeed: result.localSeed,
-              remoteSeed: result.remoteSeed,
-              authHash: result.authHash,
-            ),
-          );
-          return;
-        } on TapoApiException catch (error) {
-          lastApiError = error;
-          log('KLAP ${revision.label} handshake failed: $error');
-        } on TapoProtocolException catch (error) {
-          lastProtocolError = error;
-          log('KLAP ${revision.label} handshake failed: $error');
+            _klapBasePath = basePath.isEmpty ? '' : basePath;
+            _klapScheme = transport.scheme;
+            _klapPort = transport.port;
+            _klapSession = TapoKlapSession(
+              cookie: _cookie ?? '',
+              cipher: TapoKlapCipher.create(
+                localSeed: result.localSeed,
+                remoteSeed: result.remoteSeed,
+                authHash: result.authHash,
+              ),
+            );
+            return;
+          } on TapoApiException catch (error) {
+            lastApiError = error;
+            log('KLAP ${revision.label} handshake failed: $error');
+          } on TapoProtocolException catch (error) {
+            lastProtocolError = error;
+            log('KLAP ${revision.label} handshake failed: $error');
+          } catch (error) {
+            lastUnknownError = error;
+            log('KLAP ${revision.label} handshake failed: $error');
+          }
         }
       }
     }
@@ -569,7 +602,30 @@ abstract class TapoApiClient {
     if (lastProtocolError != null) {
       throw lastProtocolError;
     }
+    if (lastUnknownError is Exception) {
+      throw lastUnknownError as Exception;
+    }
     throw const TapoProtocolException('KLAP handshake failed.');
+  }
+
+  List<_KlapTransport> _buildKlapTransports() {
+    final transports = <_KlapTransport>[
+      _KlapTransport(
+        scheme: useHttps ? 'https' : 'http',
+        port: port,
+      ),
+    ];
+
+    if (!useHttps) {
+      if (port != 443) {
+        transports.add(const _KlapTransport(scheme: 'https', port: 443));
+      }
+      if (port != 443 && port != 80) {
+        transports.add(_KlapTransport(scheme: 'https', port: port));
+      }
+    }
+
+    return transports;
   }
 
   Future<_KlapHandshakeResult> _klapHandshakeAttempt({
@@ -577,6 +633,8 @@ abstract class TapoApiClient {
     required String password,
     required TapoKlapRevision revision,
     required String basePath,
+    required String scheme,
+    required int portOverride,
   }) async {
     final authHash = tapoKlapAuthHash(
       username: email,
@@ -587,38 +645,22 @@ abstract class TapoApiClient {
     final handshake1Uri = _klapHandshakeUri(
       'handshake1',
       basePath: basePath,
+      scheme: scheme,
+      portOverride: portOverride,
     );
 
-    log('Handshake1 request (${revision.label}) uri=$handshake1Uri length=${localSeed.length}');
-    final handshake1Response = await _postBytes(
-      handshake1Uri,
-      localSeed,
-      cookie: _cookie,
-      contentType: 'application/octet-stream',
-      headers: const {
-        'Accept': '*/*',
-      },
-    );
-    _updateCookie(handshake1Response.headers);
-    log('Handshake1 status: ${handshake1Response.statusCode}');
-    log('Handshake1 headers: ${handshake1Response.headers}');
-    log('Handshake1 cookie: ${_cookie ?? "(none)"}');
-    log('Handshake1 body length: ${handshake1Response.bodyBytes.length}');
-    if (handshake1Response.bodyBytes.isNotEmpty) {
-      log('Handshake1 body hex: ${_bytesToHex(handshake1Response.bodyBytes)}');
-    }
-
-    if (handshake1Response.statusCode < 200 ||
-        handshake1Response.statusCode >= 300) {
-      throw TapoApiException(
-        handshake1Response.statusCode,
-        'Handshake1 failed',
-      );
-    }
-
-    if (handshake1Response.bodyBytes.length < 48) {
-      throw const TapoProtocolException('Handshake1 response too short.');
-    }
+    final headerVariants = <_KlapHeaderVariant>[
+      const _KlapHeaderVariant(
+        label: 'octet+accept',
+        contentType: 'application/octet-stream',
+        headers: {'Accept': '*/*'},
+      ),
+      const _KlapHeaderVariant(
+        label: 'octet-only',
+        contentType: 'application/octet-stream',
+      ),
+      const _KlapHeaderVariant(label: 'no-headers'),
+    ];
 
     final candidates = <_KlapAuthCandidate>[
       _KlapAuthCandidate(label: 'credentials', authHash: authHash),
@@ -641,34 +683,83 @@ abstract class TapoApiClient {
     ];
 
     _KlapHandshakeMatch? match;
-    final maxOffset = handshake1Response.bodyBytes.length - 48;
-    for (final candidate in candidates) {
-      for (var offset = 0; offset <= maxOffset; offset++) {
-        final remoteSeed = handshake1Response.bodyBytes.sublist(offset, offset + 16);
-        final serverHash =
-            handshake1Response.bodyBytes.sublist(offset + 16, offset + 48);
-        final localHash = tapoKlapHandshake1Hash(
-          localSeed: localSeed,
-          remoteSeed: remoteSeed,
-          authHash: candidate.authHash,
-          revision: revision,
+    TapoApiBytesResponse? handshake1Response;
+    Object? handshake1Error;
+    for (final variant in headerVariants) {
+      log(
+        'Handshake1 request (${revision.label}) uri=$handshake1Uri length=${localSeed.length} headers=${variant.label}',
+      );
+      final response = await _postBytes(
+        handshake1Uri,
+        localSeed,
+        cookie: _cookie,
+        contentType: variant.contentType,
+        headers: variant.headers,
+      );
+      _updateCookie(response.headers);
+      log('Handshake1 status: ${response.statusCode}');
+      log('Handshake1 headers: ${response.headers}');
+      log('Handshake1 cookie: ${_cookie ?? "(none)"}');
+      log('Handshake1 body length: ${response.bodyBytes.length}');
+      if (response.bodyBytes.isNotEmpty) {
+        log('Handshake1 body hex: ${_bytesToHex(response.bodyBytes)}');
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        handshake1Error = TapoApiException(
+          response.statusCode,
+          'Handshake1 failed',
         );
-        if (_bytesEqual(serverHash, localHash)) {
-          match = _KlapHandshakeMatch(
-            candidate: candidate,
+        continue;
+      }
+
+      if (response.bodyBytes.length < 48) {
+        handshake1Error = const TapoProtocolException(
+          'Handshake1 response too short.',
+        );
+        continue;
+      }
+
+      final maxOffset = response.bodyBytes.length - 48;
+      for (final candidate in candidates) {
+        for (var offset = 0; offset <= maxOffset; offset++) {
+          final remoteSeed = response.bodyBytes.sublist(offset, offset + 16);
+          final serverHash =
+              response.bodyBytes.sublist(offset + 16, offset + 48);
+          final localHash = tapoKlapHandshake1Hash(
+            localSeed: localSeed,
             remoteSeed: remoteSeed,
-            offset: offset,
+            authHash: candidate.authHash,
+            revision: revision,
           );
+          if (_bytesEqual(serverHash, localHash)) {
+            match = _KlapHandshakeMatch(
+              candidate: candidate,
+              remoteSeed: remoteSeed,
+              offset: offset,
+            );
+            handshake1Response = response;
+            break;
+          }
+        }
+        if (match != null) {
           break;
         }
       }
+
       if (match != null) {
         break;
       }
+      handshake1Error = const TapoProtocolException(
+        'Handshake1 hash mismatch.',
+      );
     }
 
-    if (match == null) {
-      throw const TapoProtocolException('Handshake1 hash mismatch.');
+    if (handshake1Response == null || match == null) {
+      if (handshake1Error != null) {
+        throw handshake1Error;
+      }
+      throw const TapoProtocolException('Handshake1 failed.');
     }
 
     if (match.offset != 0) {
@@ -680,6 +771,8 @@ abstract class TapoApiClient {
     final handshake2Uri = _klapHandshakeUri(
       'handshake2',
       basePath: basePath,
+      scheme: scheme,
+      portOverride: portOverride,
     );
     final handshake2Payload = tapoKlapHandshake2Hash(
       localSeed: localSeed,
@@ -687,26 +780,66 @@ abstract class TapoApiClient {
       authHash: match.candidate.authHash,
       revision: revision,
     );
-    final handshake2Response = await _postBytes(
-      handshake2Uri,
-      handshake2Payload,
-      cookie: _cookie,
-      contentType: 'application/octet-stream',
-      headers: const {
-        'Accept': '*/*',
-      },
-    );
-    log('Handshake2 status: ${handshake2Response.statusCode}');
-    if (handshake2Response.bodyBytes.isNotEmpty) {
-      log('Handshake2 body length: ${handshake2Response.bodyBytes.length}');
+    final handshake2Candidates = <_KlapHandshake2Candidate>[
+      _KlapHandshake2Candidate(label: 'default', payload: handshake2Payload),
+    ];
+    if (revision == TapoKlapRevision.v2) {
+      final altPayload = tapoKlapHandshake1Hash(
+        localSeed: localSeed,
+        remoteSeed: match.remoteSeed,
+        authHash: match.candidate.authHash,
+        revision: revision,
+      );
+      if (!_bytesEqual(altPayload, handshake2Payload)) {
+        handshake2Candidates.add(
+          _KlapHandshake2Candidate(label: 'local+remote', payload: altPayload),
+        );
+      }
     }
 
-    if (handshake2Response.statusCode < 200 ||
-        handshake2Response.statusCode >= 300) {
-      throw TapoApiException(
-        handshake2Response.statusCode,
-        'Handshake2 failed',
-      );
+    TapoApiBytesResponse? handshake2Response;
+    TapoApiException? handshake2Error;
+    for (final candidate in handshake2Candidates) {
+      for (final variant in headerVariants) {
+        log(
+          'Handshake2 request (${revision.label}) uri=$handshake2Uri '
+          'length=${candidate.payload.length} headers=${variant.label} payload=${candidate.label}',
+        );
+        final response = await _postBytes(
+          handshake2Uri,
+          candidate.payload,
+          cookie: _cookie,
+          contentType: variant.contentType,
+          headers: variant.headers,
+        );
+        _updateCookie(response.headers);
+        log('Handshake2 status: ${response.statusCode}');
+        if (_cookie != null) {
+          log('Handshake2 cookie: $_cookie');
+        }
+        if (response.bodyBytes.isNotEmpty) {
+          log('Handshake2 body length: ${response.bodyBytes.length}');
+        }
+
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          handshake2Response = response;
+          break;
+        }
+        handshake2Error = TapoApiException(
+          response.statusCode,
+          'Handshake2 failed',
+        );
+      }
+      if (handshake2Response != null) {
+        break;
+      }
+    }
+
+    if (handshake2Response == null) {
+      if (handshake2Error != null) {
+        throw handshake2Error;
+      }
+      throw const TapoProtocolException('Handshake2 failed.');
     }
 
     return _KlapHandshakeResult(
@@ -816,6 +949,16 @@ class _KlapAuthCandidate {
   final Uint8List authHash;
 }
 
+class _KlapHandshake2Candidate {
+  const _KlapHandshake2Candidate({
+    required this.label,
+    required this.payload,
+  });
+
+  final String label;
+  final Uint8List payload;
+}
+
 class _KlapHandshakeMatch {
   const _KlapHandshakeMatch({
     required this.candidate,
@@ -826,4 +969,26 @@ class _KlapHandshakeMatch {
   final _KlapAuthCandidate candidate;
   final Uint8List remoteSeed;
   final int offset;
+}
+
+class _KlapTransport {
+  const _KlapTransport({
+    required this.scheme,
+    required this.port,
+  });
+
+  final String scheme;
+  final int port;
+}
+
+class _KlapHeaderVariant {
+  const _KlapHeaderVariant({
+    required this.label,
+    this.contentType,
+    this.headers,
+  });
+
+  final String label;
+  final String? contentType;
+  final Map<String, String>? headers;
 }
