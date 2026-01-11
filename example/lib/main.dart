@@ -14,10 +14,7 @@ class MyApp extends StatelessWidget {
     const title = 'Tapo P115 Demo';
     return MaterialApp(
       title: title,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
-        useMaterial3: true,
-      ),
+      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.green), useMaterial3: true),
       home: const MyHomePage(title: title),
     );
   }
@@ -36,6 +33,7 @@ class _MyHomePageState extends State<MyHomePage> {
   final _ipController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _scrollController = ScrollController();
 
   HttpTapoApiClient? _client;
   TapoDeviceInfo? _deviceInfo;
@@ -48,6 +46,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void dispose() {
     _client?.close();
+    _scrollController.dispose();
     _ipController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -73,11 +72,7 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  Future<void> _savePrefs({
-    required String ip,
-    required String email,
-    required String password,
-  }) async {
+  Future<void> _savePrefs({required String ip, required String email, required String password}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('tapo_ip', ip);
     await prefs.setString('tapo_email', email);
@@ -85,6 +80,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _connect() async {
+    FocusScope.of(context).unfocus();
     final rawInput = _ipController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text;
@@ -104,9 +100,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     Uri? deviceUri;
     try {
-      deviceUri = rawInput.contains('://')
-          ? Uri.parse(rawInput)
-          : Uri.parse('http://$rawInput');
+      deviceUri = rawInput.contains('://') ? Uri.parse(rawInput) : Uri.parse('http://$rawInput');
     } catch (_) {
       setState(() {
         _error = 'Invalid device address. Use IP or full URL.';
@@ -125,9 +119,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     final client = HttpTapoApiClient(
       host: deviceUri.host,
-      port: deviceUri.hasPort
-          ? deviceUri.port
-          : (deviceUri.scheme == 'https' ? 443 : 80),
+      port: deviceUri.hasPort ? deviceUri.port : (deviceUri.scheme == 'https' ? 443 : 80),
       useHttps: deviceUri.scheme == 'https',
       allowInsecureHttps: deviceUri.scheme == 'https',
     );
@@ -139,6 +131,10 @@ class _MyHomePageState extends State<MyHomePage> {
       setState(() {
         _client = client;
         _deviceInfo = info;
+      });
+    } on TapoInvalidCredentialsException catch (error) {
+      setState(() {
+        _error = error.message;
       });
     } catch (error) {
       setState(() {
@@ -222,6 +218,14 @@ class _MyHomePageState extends State<MyHomePage> {
       setState(() {
         _energyUsage = usage;
       });
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (_scrollController.hasClients) {
+        await _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
     } catch (error) {
       setState(() {
         _error = error.toString();
@@ -241,60 +245,37 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
       body: ListView(
+        controller: _scrollController,
         padding: const EdgeInsets.all(16),
         children: [
-          Text(
-            'Connection',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
+          Text('Connection', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 12),
           TextField(
             controller: _ipController,
-            decoration: const InputDecoration(
-              labelText: 'Device IP or URL',
-              border: OutlineInputBorder(),
-            ),
+            decoration: const InputDecoration(labelText: 'Device IP or URL', border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _emailController,
-            decoration: const InputDecoration(
-              labelText: 'Tapo account email',
-              border: OutlineInputBorder(),
-            ),
+            decoration: const InputDecoration(labelText: 'Tapo account email', border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _passwordController,
             obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Tapo account password',
-              border: OutlineInputBorder(),
-            ),
+            decoration: const InputDecoration(labelText: 'Tapo account password', border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
-          FilledButton(
-            onPressed: _isLoading ? null : _connect,
-            child: const Text('Connect'),
-          ),
+          FilledButton(onPressed: _isLoading ? null : _connect, child: const Text('Connect')),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(
-              _error!,
-              style: const TextStyle(color: Colors.redAccent),
-            ),
+            Text(_error!, style: const TextStyle(color: Colors.redAccent)),
           ],
           const SizedBox(height: 24),
-          Text(
-            'Device',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
+          Text('Device', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 12),
           if (!_isConnected)
-            Text(
-              'Not connected yet.',
-              style: Theme.of(context).textTheme.bodySmall,
-            )
+            Text('Not connected yet.', style: Theme.of(context).textTheme.bodySmall)
           else ...[
             Card(
               child: Padding(
@@ -317,13 +298,14 @@ class _MyHomePageState extends State<MyHomePage> {
               value: deviceInfo?.deviceOn ?? false,
               onChanged: _isLoading ? null : _togglePower,
             ),
-            Row(
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
               children: [
                 FilledButton(
                   onPressed: _isLoading ? null : _refreshDeviceInfo,
                   child: const Text('Refresh device info'),
                 ),
-                const SizedBox(width: 12),
                 OutlinedButton(
                   onPressed: _isLoading ? null : _loadEnergyUsage,
                   child: const Text('Load energy usage'),

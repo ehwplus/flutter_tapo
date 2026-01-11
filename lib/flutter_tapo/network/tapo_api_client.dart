@@ -608,6 +608,15 @@ abstract class TapoApiClient {
     }
 
     if (handshake1Response == null || match == null) {
+      if (handshake1Error is TapoProtocolException &&
+          (handshake1Error as TapoProtocolException)
+              .message
+              .toLowerCase()
+              .contains('hash mismatch')) {
+        throw const TapoInvalidCredentialsException(
+          'Invalid credentials. Please check email/password.',
+        );
+      }
       if (handshake1Error != null) {
         throw handshake1Error;
       }

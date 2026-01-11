@@ -21,3 +21,12 @@ class TapoProtocolException implements Exception {
   @override
   String toString() => 'TapoProtocolException(message: $message)';
 }
+
+class TapoInvalidCredentialsException implements Exception {
+  const TapoInvalidCredentialsException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'TapoInvalidCredentialsException(message: $message)';
+}
