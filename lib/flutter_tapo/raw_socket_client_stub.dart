@@ -10,5 +10,5 @@ Future<RawSocketResponse> sendPlatformRawSocketRequest({
   Map<String, String>? headers,
   required Uint8List body,
 }) {
-  throw UnsupportedError('Raw socket requests are not supported on this platform.');
+  throw UnsupportedError('Raw socket requests are only available on IO platforms.');
 }

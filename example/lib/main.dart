@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_tapo/flutter_tapo.dart';
 
-import 'custom_tapo_api_client.dart';
-
 void main() {
   runApp(const MyApp());
 }
@@ -38,7 +36,7 @@ class _MyHomePageState extends State<MyHomePage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
-  CustomTapoApiClient? _client;
+  HttpTapoApiClient? _client;
   TapoDeviceInfo? _deviceInfo;
   TapoEnergyUsage? _energyUsage;
   bool _isLoading = false;
@@ -48,6 +46,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   void dispose() {
+    _client?.close();
     _ipController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -93,15 +92,13 @@ class _MyHomePageState extends State<MyHomePage> {
       return;
     }
 
-    final client = CustomTapoApiClient(
+    final client = HttpTapoApiClient(
       host: deviceUri.host,
       port: deviceUri.hasPort
           ? deviceUri.port
           : (deviceUri.scheme == 'https' ? 443 : 80),
       useHttps: deviceUri.scheme == 'https',
       allowInsecureHttps: deviceUri.scheme == 'https',
-      useRawSocketForHandshake: true,
-      useRawSocketForKlapRequests: true,
     );
 
     try {

@@ -2,31 +2,31 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_tapo/flutter_tapo.dart';
 import 'package:http/http.dart' as http;
 
 import 'http_client_factory.dart';
 import 'raw_socket_client.dart';
+import 'tapo_api_client.dart';
 
-class CustomTapoApiClient extends TapoApiClient {
-  CustomTapoApiClient({
+class HttpTapoApiClient extends TapoApiClient {
+  HttpTapoApiClient({
     required super.host,
     super.port = 80,
     super.useHttps = false,
     bool allowInsecureHttps = false,
     String userAgent = 'reqwest/0.11.22',
     String acceptEncoding = 'gzip, deflate',
-    bool useRawSocketForHandshake = false,
-    bool useRawSocketForKlapRequests = false,
+    bool useRawSocketForHandshake = true,
+    bool useRawSocketForKlapRequests = true,
     http.Client? client,
   }) : _client = client ??
             createHttpClient(
               allowInsecure: allowInsecureHttps,
             ),
-       _userAgent = userAgent,
-       _acceptEncoding = acceptEncoding,
-       _useRawSocketForHandshake = useRawSocketForHandshake,
-       _useRawSocketForKlapRequests = useRawSocketForKlapRequests;
+        _userAgent = userAgent,
+        _acceptEncoding = acceptEncoding,
+        _useRawSocketForHandshake = useRawSocketForHandshake,
+        _useRawSocketForKlapRequests = useRawSocketForKlapRequests;
 
   final http.Client _client;
   final String _userAgent;
@@ -77,17 +77,10 @@ class CustomTapoApiClient extends TapoApiClient {
       ...?headers,
     };
 
-    if (kDebugMode && url.path.contains('handshake')) {
-      debugPrint(
-        'HTTP request url=$url contentLength=${body.length} headers=$resolvedHeaders',
-      );
-    }
-
-    if (_useRawSocketForHandshake &&
-        !kIsWeb &&
+    if (!kIsWeb &&
         url.scheme == 'http' &&
+        _useRawSocketForHandshake &&
         _isHandshakePath(url.path)) {
-      debugPrint('Using raw socket for $url');
       final rawResponse = await sendRawSocketRequest(
         host: url.host,
         port: url.port,
@@ -103,11 +96,10 @@ class CustomTapoApiClient extends TapoApiClient {
       );
     }
 
-    if (_useRawSocketForKlapRequests &&
-        !kIsWeb &&
+    if (!kIsWeb &&
         url.scheme == 'http' &&
+        _useRawSocketForKlapRequests &&
         _isKlapRequestPath(url.path)) {
-      debugPrint('Using raw socket for $url');
       final rawResponse = await sendRawSocketRequest(
         host: url.host,
         port: url.port,

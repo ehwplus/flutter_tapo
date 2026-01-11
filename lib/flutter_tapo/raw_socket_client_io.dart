@@ -42,10 +42,9 @@ Future<RawSocketResponse> sendPlatformRawSocketRequest({
   }
   await socket.flush();
 
-  final responseBytes = await _readHttpResponse(socket);
+  final response = await _readHttpResponse(socket);
   await socket.close();
-
-  return responseBytes;
+  return response;
 }
 
 Future<RawSocketResponse> _readHttpResponse(Socket socket) {
