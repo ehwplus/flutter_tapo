@@ -133,11 +133,6 @@ class HttpTapoApiClient extends TapoApiClient {
   void close() {
     _client.close();
   }
-
-  @override
-  void log(String message) {
-    debugPrint(message);
-  }
 }
 
 class _RawResponse {

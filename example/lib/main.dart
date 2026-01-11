@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_tapo/flutter_tapo.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const MyApp());
@@ -53,6 +54,36 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ip = prefs.getString('tapo_ip');
+    final email = prefs.getString('tapo_email');
+    final password = prefs.getString('tapo_password');
+    if (!mounted) return;
+    setState(() {
+      if (ip != null) _ipController.text = ip;
+      if (email != null) _emailController.text = email;
+      if (password != null) _passwordController.text = password;
+    });
+  }
+
+  Future<void> _savePrefs({
+    required String ip,
+    required String email,
+    required String password,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('tapo_ip', ip);
+    await prefs.setString('tapo_email', email);
+    await prefs.setString('tapo_password', password);
+  }
+
   Future<void> _connect() async {
     final rawInput = _ipController.text.trim();
     final email = _emailController.text.trim();
@@ -102,6 +133,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
 
     try {
+      await _savePrefs(ip: rawInput, email: email, password: password);
       await client.authenticate(email: email, password: password);
       final info = await client.getDeviceInfo();
       setState(() {
