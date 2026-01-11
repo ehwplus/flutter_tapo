@@ -100,6 +100,8 @@ class _MyHomePageState extends State<MyHomePage> {
           : (deviceUri.scheme == 'https' ? 443 : 80),
       useHttps: deviceUri.scheme == 'https',
       allowInsecureHttps: deviceUri.scheme == 'https',
+      useRawSocketForHandshake: true,
+      useRawSocketForKlapRequests: true,
     );
 
     try {
