@@ -1,7 +1,8 @@
 # flutter_tapo
 
-Local Flutter client for TP-Link Tapo devices (tested with P115). The package
-implements the device handshake, encrypted requests, and a minimal device API.
+Local Flutter client for TP-Link Tapo devices (tested with P115). P100 should
+work as well but is not yet tested. The package implements the device handshake,
+encrypted requests, and a minimal device API.
 
 ## Known limitations
 

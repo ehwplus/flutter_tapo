@@ -3,20 +3,16 @@ import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 
-import 'tapo_cipher.dart';
-import 'tapo_device_info.dart';
-import 'tapo_encoding.dart';
-import 'tapo_energy_usage.dart';
-import 'tapo_exception.dart';
-import 'tapo_klap.dart';
+import '../core/tapo_exception.dart';
+import '../crypto/tapo_cipher.dart';
+import '../model/tapo_device_info.dart';
+import '../model/tapo_energy_usage.dart';
+import '../protocol/tapo_klap.dart';
+import '../util/tapo_encoding.dart';
 
 abstract class TapoApiClient {
-  TapoApiClient({
-    required this.host,
-    this.port = 80,
-    this.useHttps = false,
-    Uuid? uuid,
-  }) : terminalUuid = (uuid ?? const Uuid()).v4();
+  TapoApiClient({required this.host, this.port = 80, this.useHttps = false, Uuid? uuid})
+    : terminalUuid = (uuid ?? const Uuid()).v4();
 
   final String host;
   final int port;
@@ -40,10 +36,7 @@ abstract class TapoApiClient {
     return _token != null;
   }
 
-  Future<void> authenticate({
-    required String email,
-    required String password,
-  }) async {
+  Future<void> authenticate({required String email, required String password}) async {
     _protocolType ??= await _discoverProtocol();
     if (_protocolType == TapoProtocolType.klap) {
       log('Starting KLAP handshake...');
@@ -82,23 +75,16 @@ abstract class TapoApiClient {
       for (final key in keyVariants) ...[
         {
           'method': 'handshake',
-          'params': {
-            'key': key,
-          },
+          'params': {'key': key},
         },
         {
           'method': 'handshake',
-          'params': {
-            'key': key,
-          },
+          'params': {'key': key},
           'requestTimeMils': 0,
         },
         {
           'method': 'handshake',
-          'params': {
-            'key': key,
-            'requestTimeMils': 0,
-          },
+          'params': {'key': key, 'requestTimeMils': 0},
         },
       ],
     ];
@@ -108,11 +94,7 @@ abstract class TapoApiClient {
       final payload = attempts[i];
       log('Handshake attempt ${i + 1}: ${jsonEncode(payload)}');
       try {
-        final response = await _postJson(
-          _baseUri(),
-          payload,
-          includeCookie: false,
-        );
+        final response = await _postJson(_baseUri(), payload, includeCookie: false);
 
         log('Handshake response: ${response.body}');
         _updateCookie(response.headers);
@@ -125,17 +107,12 @@ abstract class TapoApiClient {
           throw const TapoProtocolException('Handshake did not return a key.');
         }
 
-        _cipher = TapoCipher.fromHandshakeKey(
-          handshakeKey: key,
-          keyPair: keyPair,
-        );
+        _cipher = TapoCipher.fromHandshakeKey(handshakeKey: key, keyPair: keyPair);
         _token = null;
         return;
       } on TapoApiException catch (error) {
         lastError = error;
-        if (error.code != 1002 &&
-            error.code != 1003 &&
-            error.code != -1003) {
+        if (error.code != 1002 && error.code != 1003 && error.code != -1003) {
           rethrow;
         }
         log('Handshake attempt ${i + 1} failed: $error');
@@ -147,27 +124,19 @@ abstract class TapoApiClient {
     }
   }
 
-  Future<void> login({
-    required String email,
-    required String password,
-  }) async {
+  Future<void> login({required String email, required String password}) async {
     _protocolType ??= TapoProtocolType.passthrough;
     final encodedUsername = TapoEncoding.encodeUsername(email);
     final encodedPassword = TapoEncoding.encodePassword(password);
 
     final payload = _buildPayload(
       'login_device',
-      params: {
-        'username': encodedUsername,
-        'password': encodedPassword,
-      },
+      params: {'username': encodedUsername, 'password': encodedPassword},
       includeRequestTimeMils: true,
     );
 
     final safePayload = Map<String, dynamic>.from(payload);
-    final safeParams = Map<String, dynamic>.from(
-      safePayload['params'] as Map<String, dynamic>,
-    );
+    final safeParams = Map<String, dynamic>.from(safePayload['params'] as Map<String, dynamic>);
     if (safeParams.containsKey('password')) {
       safeParams['password'] = '***';
     }
@@ -184,10 +153,7 @@ abstract class TapoApiClient {
   }
 
   Future<TapoDeviceInfo> getDeviceInfo() async {
-    final payload = _buildPayload(
-      'get_device_info',
-      includeRequestTimeMils: true,
-    );
+    final payload = _buildPayload('get_device_info', includeRequestTimeMils: true);
     log('Device info request: ${jsonEncode(payload)}');
     final response = await _sendRequest(payload, requiresToken: true);
     log('Device info response: ${jsonEncode(response)}');
@@ -197,9 +163,7 @@ abstract class TapoApiClient {
   Future<void> setPowerState(bool isOn) async {
     final payload = _buildPayload(
       'set_device_info',
-      params: {
-        'device_on': isOn,
-      },
+      params: {'device_on': isOn},
       includeRequestTimeMils: true,
       includeTerminalUuid: true,
     );
@@ -209,30 +173,21 @@ abstract class TapoApiClient {
   }
 
   Future<TapoEnergyUsage> getEnergyUsage() async {
-    final payload = _buildPayload(
-      'get_energy_usage',
-      includeRequestTimeMils: true,
-    );
+    final payload = _buildPayload('get_energy_usage', includeRequestTimeMils: true);
     log('Energy usage request: ${jsonEncode(payload)}');
     final response = await _sendRequest(payload, requiresToken: true);
     log('Energy usage response: ${jsonEncode(response)}');
     return TapoEnergyUsage.fromJson(_extractResult(response));
   }
 
-  Future<Map<String, dynamic>> _sendRequest(
-    Map<String, dynamic> payload, {
-    required bool requiresToken,
-  }) async {
+  Future<Map<String, dynamic>> _sendRequest(Map<String, dynamic> payload, {required bool requiresToken}) async {
     if (_protocolType == TapoProtocolType.klap) {
       return _sendKlap(payload);
     }
     return _sendSecure(payload, withToken: requiresToken);
   }
 
-  Future<Map<String, dynamic>> _sendSecure(
-    Map<String, dynamic> payload, {
-    required bool withToken,
-  }) async {
+  Future<Map<String, dynamic>> _sendSecure(Map<String, dynamic> payload, {required bool withToken}) async {
     final cipher = _cipher;
     if (cipher == null) {
       throw const TapoProtocolException('Handshake must be completed first.');
@@ -245,9 +200,7 @@ abstract class TapoApiClient {
     final encryptedPayload = cipher.encrypt(jsonEncode(payload));
     final securePayload = <String, dynamic>{
       'method': 'securePassthrough',
-      'params': {
-        'request': encryptedPayload,
-      },
+      'params': {'request': encryptedPayload},
     };
 
     log('Secure passthrough request: ${jsonEncode(securePayload)}');
@@ -270,9 +223,7 @@ abstract class TapoApiClient {
     return inner;
   }
 
-  Future<Map<String, dynamic>> _sendKlap(
-    Map<String, dynamic> payload,
-  ) async {
+  Future<Map<String, dynamic>> _sendKlap(Map<String, dynamic> payload) async {
     final session = _klapSession;
     if (session == null) {
       throw const TapoProtocolException('KLAP handshake must be completed first.');
@@ -283,20 +234,13 @@ abstract class TapoApiClient {
     final uri = _klapRequestUri(encrypted.seq);
 
     log('KLAP request seq=${encrypted.seq}: ${jsonEncode(payload)}');
-    final response = await _postBytes(
-      uri,
-      encrypted.payload,
-      cookie: session.cookie,
-    );
+    final response = await _postBytes(uri, encrypted.payload, cookie: session.cookie);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       if (response.statusCode == 401 || response.statusCode == 403) {
         throw const TapoApiException(9999, 'Session timeout');
       }
-      throw TapoApiException(
-        response.statusCode,
-        'Invalid response',
-      );
+      throw TapoApiException(response.statusCode, 'Invalid response');
     }
 
     final decrypted = session.cipher.decrypt(encrypted.seq, response.bodyBytes);
@@ -312,10 +256,7 @@ abstract class TapoApiClient {
     bool includeRequestTimeMils = false,
     bool includeTerminalUuid = false,
   }) {
-    final payload = <String, dynamic>{
-      'method': method,
-      'params': params ?? <String, dynamic>{},
-    };
+    final payload = <String, dynamic>{'method': method, 'params': params ?? <String, dynamic>{}};
 
     if (includeRequestTimeMils) {
       payload['requestTimeMils'] = DateTime.now().millisecondsSinceEpoch;
@@ -332,31 +273,14 @@ abstract class TapoApiClient {
     final scheme = useHttps ? 'https' : 'http';
     final query = withToken ? 'token=$_token' : null;
 
-    return Uri(
-      scheme: scheme,
-      host: host,
-      port: port,
-      path: '/app',
-      query: query,
-    );
+    return Uri(scheme: scheme, host: host, port: port, path: '/app', query: query);
   }
 
-  Uri _klapHandshakeUri(
-    String path, {
-    String? basePath,
-    String? scheme,
-    int? portOverride,
-  }) {
-    final resolvedScheme =
-        scheme ?? _klapScheme ?? (useHttps ? 'https' : 'http');
+  Uri _klapHandshakeUri(String path, {String? basePath, String? scheme, int? portOverride}) {
+    final resolvedScheme = scheme ?? _klapScheme ?? (useHttps ? 'https' : 'http');
     final resolvedPort = portOverride ?? _klapPort ?? port;
     final resolvedPath = _joinKlapPath(basePath ?? _klapBasePath, path);
-    return Uri(
-      scheme: resolvedScheme,
-      host: host,
-      port: resolvedPort,
-      path: resolvedPath,
-    );
+    return Uri(scheme: resolvedScheme, host: host, port: resolvedPort, path: resolvedPath);
   }
 
   Uri _klapRequestUri(int seq) {
@@ -368,9 +292,7 @@ abstract class TapoApiClient {
       host: host,
       port: resolvedPort,
       path: resolvedPath,
-      queryParameters: {
-        'seq': seq.toString(),
-      },
+      queryParameters: {'seq': seq.toString()},
     );
   }
 
@@ -379,20 +301,12 @@ abstract class TapoApiClient {
       return '/$segment';
     }
     final normalized = basePath.startsWith('/') ? basePath : '/$basePath';
-    final trimmed =
-        normalized.endsWith('/') ? normalized.substring(0, normalized.length - 1) : normalized;
+    final trimmed = normalized.endsWith('/') ? normalized.substring(0, normalized.length - 1) : normalized;
     return '$trimmed/$segment';
   }
 
-  Future<TapoApiResponse> _postJson(
-    Uri url,
-    Map<String, dynamic> payload, {
-    bool includeCookie = true,
-  }) {
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    };
+  Future<TapoApiResponse> _postJson(Uri url, Map<String, dynamic> payload, {bool includeCookie = true}) {
+    final headers = <String, String>{'Content-Type': 'application/json', 'Accept': 'application/json'};
 
     if (includeCookie && _cookie != null) {
       headers['Cookie'] = _cookie!;
@@ -435,10 +349,7 @@ abstract class TapoApiClient {
       return;
     }
 
-    final match = RegExp(
-      r'(TP_SESSIONID)=([^;]+)',
-      caseSensitive: false,
-    ).firstMatch(setCookie);
+    final match = RegExp(r'(TP_SESSIONID)=([^;]+)', caseSensitive: false).firstMatch(setCookie);
     if (match != null) {
       final name = match.group(1)!;
       final value = match.group(2)!;
@@ -487,18 +398,9 @@ abstract class TapoApiClient {
 
   Future<TapoProtocolType> _discoverProtocol() async {
     final attempts = <Map<String, dynamic>>[
-      {
-        'method': 'component_nego',
-      },
-      {
-        'method': 'component_nego',
-        'params': <String, dynamic>{},
-      },
-      {
-        'method': 'component_nego',
-        'params': <String, dynamic>{},
-        'requestTimeMils': 0,
-      },
+      {'method': 'component_nego'},
+      {'method': 'component_nego', 'params': <String, dynamic>{}},
+      {'method': 'component_nego', 'params': <String, dynamic>{}, 'requestTimeMils': 0},
     ];
 
     for (var i = 0; i < attempts.length; i++) {
@@ -522,8 +424,7 @@ abstract class TapoApiClient {
       }
 
       final rawCode = data['error_code'];
-      final code =
-          rawCode is int ? rawCode : int.tryParse(rawCode.toString()) ?? 0;
+      final code = rawCode is int ? rawCode : int.tryParse(rawCode.toString()) ?? 0;
 
       if (code == 0) {
         return TapoProtocolType.passthrough;
@@ -538,15 +439,9 @@ abstract class TapoApiClient {
     return TapoProtocolType.klap;
   }
 
-  Future<void> _klapHandshake({
-    required String email,
-    required String password,
-  }) async {
+  Future<void> _klapHandshake({required String email, required String password}) async {
     final basePaths = <String>['/app', ''];
-    final revisions = <TapoKlapRevision>[
-      TapoKlapRevision.v2,
-      TapoKlapRevision.v1,
-    ];
+    final revisions = <TapoKlapRevision>[TapoKlapRevision.v2, TapoKlapRevision.v1];
     final transports = _buildKlapTransports();
 
     TapoApiException? lastApiError;
@@ -603,29 +498,13 @@ abstract class TapoApiClient {
       throw lastProtocolError;
     }
     if (lastUnknownError is Exception) {
-      throw lastUnknownError as Exception;
+      throw lastUnknownError;
     }
     throw const TapoProtocolException('KLAP handshake failed.');
   }
 
   List<_KlapTransport> _buildKlapTransports() {
-    final transports = <_KlapTransport>[
-      _KlapTransport(
-        scheme: useHttps ? 'https' : 'http',
-        port: port,
-      ),
-    ];
-
-    if (!useHttps) {
-      if (port != 443) {
-        transports.add(const _KlapTransport(scheme: 'https', port: 443));
-      }
-      if (port != 443 && port != 80) {
-        transports.add(_KlapTransport(scheme: 'https', port: port));
-      }
-    }
-
-    return transports;
+    return [_KlapTransport(scheme: useHttps ? 'https' : 'http', port: port)];
   }
 
   Future<_KlapHandshakeResult> _klapHandshakeAttempt({
@@ -636,11 +515,7 @@ abstract class TapoApiClient {
     required String scheme,
     required int portOverride,
   }) async {
-    final authHash = tapoKlapAuthHash(
-      username: email,
-      password: password,
-      revision: revision,
-    );
+    final authHash = tapoKlapAuthHash(username: email, password: password, revision: revision);
     final localSeed = tapoRandomBytes(16);
     final handshake1Uri = _klapHandshakeUri(
       'handshake1',
@@ -655,10 +530,7 @@ abstract class TapoApiClient {
         contentType: 'application/octet-stream',
         headers: {'Accept': '*/*'},
       ),
-      const _KlapHeaderVariant(
-        label: 'octet-only',
-        contentType: 'application/octet-stream',
-      ),
+      const _KlapHeaderVariant(label: 'octet-only', contentType: 'application/octet-stream'),
       const _KlapHeaderVariant(label: 'no-headers'),
     ];
 
@@ -666,19 +538,11 @@ abstract class TapoApiClient {
       _KlapAuthCandidate(label: 'credentials', authHash: authHash),
       _KlapAuthCandidate(
         label: 'blank',
-        authHash: tapoKlapAuthHash(
-          username: '',
-          password: '',
-          revision: revision,
-        ),
+        authHash: tapoKlapAuthHash(username: '', password: '', revision: revision),
       ),
       _KlapAuthCandidate(
         label: 'test',
-        authHash: tapoKlapAuthHash(
-          username: 'test@tp-link.net',
-          password: 'test',
-          revision: revision,
-        ),
+        authHash: tapoKlapAuthHash(username: 'test@tp-link.net', password: 'test', revision: revision),
       ),
     ];
 
@@ -706,17 +570,12 @@ abstract class TapoApiClient {
       }
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        handshake1Error = TapoApiException(
-          response.statusCode,
-          'Handshake1 failed',
-        );
+        handshake1Error = TapoApiException(response.statusCode, 'Handshake1 failed');
         continue;
       }
 
       if (response.bodyBytes.length < 48) {
-        handshake1Error = const TapoProtocolException(
-          'Handshake1 response too short.',
-        );
+        handshake1Error = const TapoProtocolException('Handshake1 response too short.');
         continue;
       }
 
@@ -724,8 +583,7 @@ abstract class TapoApiClient {
       for (final candidate in candidates) {
         for (var offset = 0; offset <= maxOffset; offset++) {
           final remoteSeed = response.bodyBytes.sublist(offset, offset + 16);
-          final serverHash =
-              response.bodyBytes.sublist(offset + 16, offset + 48);
+          final serverHash = response.bodyBytes.sublist(offset + 16, offset + 48);
           final localHash = tapoKlapHandshake1Hash(
             localSeed: localSeed,
             remoteSeed: remoteSeed,
@@ -733,11 +591,7 @@ abstract class TapoApiClient {
             revision: revision,
           );
           if (_bytesEqual(serverHash, localHash)) {
-            match = _KlapHandshakeMatch(
-              candidate: candidate,
-              remoteSeed: remoteSeed,
-              offset: offset,
-            );
+            match = _KlapHandshakeMatch(candidate: candidate, remoteSeed: remoteSeed, offset: offset);
             handshake1Response = response;
             break;
           }
@@ -750,12 +604,19 @@ abstract class TapoApiClient {
       if (match != null) {
         break;
       }
-      handshake1Error = const TapoProtocolException(
-        'Handshake1 hash mismatch.',
-      );
+      handshake1Error = const TapoProtocolException('Handshake1 hash mismatch.');
     }
 
     if (handshake1Response == null || match == null) {
+      if (handshake1Error is TapoProtocolException &&
+          (handshake1Error as TapoProtocolException)
+              .message
+              .toLowerCase()
+              .contains('hash mismatch')) {
+        throw const TapoInvalidCredentialsException(
+          'Invalid credentials. Please check email/password.',
+        );
+      }
       if (handshake1Error != null) {
         throw handshake1Error;
       }
@@ -791,9 +652,7 @@ abstract class TapoApiClient {
         revision: revision,
       );
       if (!_bytesEqual(altPayload, handshake2Payload)) {
-        handshake2Candidates.add(
-          _KlapHandshake2Candidate(label: 'local+remote', payload: altPayload),
-        );
+        handshake2Candidates.add(_KlapHandshake2Candidate(label: 'local+remote', payload: altPayload));
       }
     }
 
@@ -825,10 +684,7 @@ abstract class TapoApiClient {
           handshake2Response = response;
           break;
         }
-        handshake2Error = TapoApiException(
-          response.statusCode,
-          'Handshake2 failed',
-        );
+        handshake2Error = TapoApiException(response.statusCode, 'Handshake2 failed');
       }
       if (handshake2Response != null) {
         break;
@@ -842,11 +698,7 @@ abstract class TapoApiClient {
       throw const TapoProtocolException('Handshake2 failed.');
     }
 
-    return _KlapHandshakeResult(
-      localSeed: localSeed,
-      remoteSeed: match.remoteSeed,
-      authHash: match.candidate.authHash,
-    );
+    return _KlapHandshakeResult(localSeed: localSeed, remoteSeed: match.remoteSeed, authHash: match.candidate.authHash);
   }
 
   bool _bytesEqual(List<int> a, List<int> b) {
@@ -873,25 +725,13 @@ abstract class TapoApiClient {
     return buffer.toString();
   }
 
-  Future<TapoApiResponse> post(
-    Uri url, {
-    Map<String, String>? headers,
-    required String body,
-  });
+  Future<TapoApiResponse> post(Uri url, {Map<String, String>? headers, required String body});
 
-  Future<TapoApiBytesResponse> postBytes(
-    Uri url, {
-    Map<String, String>? headers,
-    required Uint8List body,
-  });
+  Future<TapoApiBytesResponse> postBytes(Uri url, {Map<String, String>? headers, required Uint8List body});
 }
 
 class TapoApiResponse {
-  const TapoApiResponse({
-    required this.statusCode,
-    required this.body,
-    required this.headers,
-  });
+  const TapoApiResponse({required this.statusCode, required this.body, required this.headers});
 
   final int statusCode;
   final String body;
@@ -899,21 +739,14 @@ class TapoApiResponse {
 }
 
 class TapoApiBytesResponse {
-  const TapoApiBytesResponse({
-    required this.statusCode,
-    required this.bodyBytes,
-    required this.headers,
-  });
+  const TapoApiBytesResponse({required this.statusCode, required this.bodyBytes, required this.headers});
 
   final int statusCode;
   final Uint8List bodyBytes;
   final Map<String, String> headers;
 }
 
-enum TapoProtocolType {
-  passthrough,
-  klap,
-}
+enum TapoProtocolType { passthrough, klap }
 
 const Map<int, String> _errorMessages = {
   1002: 'Incorrect request',
@@ -928,11 +761,7 @@ const Map<int, String> _errorMessages = {
 };
 
 class _KlapHandshakeResult {
-  const _KlapHandshakeResult({
-    required this.localSeed,
-    required this.remoteSeed,
-    required this.authHash,
-  });
+  const _KlapHandshakeResult({required this.localSeed, required this.remoteSeed, required this.authHash});
 
   final Uint8List localSeed;
   final Uint8List remoteSeed;
@@ -940,31 +769,21 @@ class _KlapHandshakeResult {
 }
 
 class _KlapAuthCandidate {
-  const _KlapAuthCandidate({
-    required this.label,
-    required this.authHash,
-  });
+  const _KlapAuthCandidate({required this.label, required this.authHash});
 
   final String label;
   final Uint8List authHash;
 }
 
 class _KlapHandshake2Candidate {
-  const _KlapHandshake2Candidate({
-    required this.label,
-    required this.payload,
-  });
+  const _KlapHandshake2Candidate({required this.label, required this.payload});
 
   final String label;
   final Uint8List payload;
 }
 
 class _KlapHandshakeMatch {
-  const _KlapHandshakeMatch({
-    required this.candidate,
-    required this.remoteSeed,
-    required this.offset,
-  });
+  const _KlapHandshakeMatch({required this.candidate, required this.remoteSeed, required this.offset});
 
   final _KlapAuthCandidate candidate;
   final Uint8List remoteSeed;
@@ -972,21 +791,14 @@ class _KlapHandshakeMatch {
 }
 
 class _KlapTransport {
-  const _KlapTransport({
-    required this.scheme,
-    required this.port,
-  });
+  const _KlapTransport({required this.scheme, required this.port});
 
   final String scheme;
   final int port;
 }
 
 class _KlapHeaderVariant {
-  const _KlapHeaderVariant({
-    required this.label,
-    this.contentType,
-    this.headers,
-  });
+  const _KlapHeaderVariant({required this.label, this.contentType, this.headers});
 
   final String label;
   final String? contentType;

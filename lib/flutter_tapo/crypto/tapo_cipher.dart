@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:asn1lib/asn1lib.dart';
 import 'package:pointycastle/export.dart';
 
-import 'tapo_exception.dart';
+import '../core/tapo_exception.dart';
 
 class TapoKeyPair {
   TapoKeyPair(this.privateKey, this.publicKey);

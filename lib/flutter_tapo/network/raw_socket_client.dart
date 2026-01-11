@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 
+import 'raw_socket_client_types.dart';
 import 'raw_socket_client_stub.dart'
     if (dart.library.io) 'raw_socket_client_io.dart';
-import 'raw_socket_client_types.dart';
 
 Future<RawSocketResponse> sendRawSocketRequest({
   required String host,
