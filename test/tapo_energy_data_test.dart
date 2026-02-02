@@ -43,4 +43,17 @@ void main() {
     expect(trimmed.values.length, 3);
     expect(trimmed.values.last, 3);
   });
+
+  test('trims old daily points outside the valid window', () {
+    final interval = TapoEnergyDataInterval.daily(quarterStart: DateTime(2025, 1, 1));
+    final data = TapoEnergyData.fromJson(
+      {'data': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]},
+      interval: interval,
+    );
+
+    final trimmed = data.trimToValidWindow(now: DateTime(2025, 4, 5, 10));
+    expect(trimmed.values.length, 6);
+    expect(trimmed.startDate, DateTime(2025, 1, 5));
+    expect(trimmed.values.first, 5);
+  });
 }

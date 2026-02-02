@@ -191,7 +191,7 @@ abstract class TapoApiClient {
     final response = await _sendRequest(payload, requiresToken: true);
     log('Energy data response: ${jsonEncode(response)}');
     final data = TapoEnergyData.fromJson(_extractResult(response), interval: interval);
-    return data.trimToNow();
+    return data.trimToValidWindow();
   }
 
   Future<Map<String, dynamic>> _sendRequest(Map<String, dynamic> payload, {required bool requiresToken}) async {

@@ -145,14 +145,38 @@ class TapoEnergyData {
     );
   }
 
+  TapoEnergyData trimToValidWindow({DateTime? now}) {
+    final effectiveNow = now ?? localDateTime ?? DateTime.now();
+    final trimmed = trimToNow(now: effectiveNow);
+    if (trimmed.values.isEmpty) {
+      return trimmed;
+    }
+
+    final windowStart = trimmed._windowStart(effectiveNow);
+    final drop = trimmed._pointsBefore(windowStart);
+    if (drop <= 0) {
+      return trimmed;
+    }
+
+    final newStart =
+        drop >= trimmed.values.length ? trimmed._alignToInterval(windowStart) : trimmed._pointStartForIndex(drop);
+    final newValues = drop >= trimmed.values.length ? const <int>[] : trimmed.values.sublist(drop);
+    final newEnd = newValues.isEmpty ? null : trimmed._pointStartForIndex(drop + newValues.length - 1);
+
+    return TapoEnergyData(
+      intervalType: trimmed.intervalType,
+      startDate: newStart,
+      values: newValues,
+      interval: trimmed.interval,
+      startTimestamp: trimmed.startTimestamp == null ? null : _toUnixSeconds(newStart),
+      endTimestamp: trimmed.endTimestamp == null || newEnd == null ? null : _toUnixSeconds(newEnd),
+      localTime: trimmed.localTime,
+    );
+  }
+
   List<TapoEnergyDataPoint> get points {
     return List<TapoEnergyDataPoint>.generate(values.length, (index) {
-      final pointStart = switch (intervalType) {
-        TapoEnergyDataIntervalType.hourly => startDate.add(Duration(hours: index)),
-        TapoEnergyDataIntervalType.daily => DateTime(startDate.year, startDate.month, startDate.day + index),
-        TapoEnergyDataIntervalType.monthly => DateTime(startDate.year, startDate.month + index, 1),
-      };
-      return TapoEnergyDataPoint(start: pointStart, energyWh: values[index]);
+      return TapoEnergyDataPoint(start: _pointStartForIndex(index), energyWh: values[index]);
     });
   }
 
@@ -188,6 +212,47 @@ class TapoEnergyData {
       return value.toInt();
     }
     return int.tryParse(value?.toString() ?? '');
+  }
+
+  static int _toUnixSeconds(DateTime date) {
+    return date.millisecondsSinceEpoch ~/ 1000;
+  }
+
+  DateTime _pointStartForIndex(int index) {
+    return switch (intervalType) {
+      TapoEnergyDataIntervalType.hourly => startDate.add(Duration(hours: index)),
+      TapoEnergyDataIntervalType.daily => DateTime(startDate.year, startDate.month, startDate.day + index),
+      TapoEnergyDataIntervalType.monthly => DateTime(startDate.year, startDate.month + index, 1),
+    };
+  }
+
+  DateTime _windowStart(DateTime now) {
+    return switch (intervalType) {
+      TapoEnergyDataIntervalType.hourly => now.subtract(const Duration(days: 7)),
+      TapoEnergyDataIntervalType.daily => _addMonths(DateTime(now.year, now.month, now.day), -3),
+      TapoEnergyDataIntervalType.monthly => _addMonths(DateTime(now.year, now.month, now.day), -12),
+    };
+  }
+
+  DateTime _alignToInterval(DateTime date) {
+    return switch (intervalType) {
+      TapoEnergyDataIntervalType.hourly => DateTime(date.year, date.month, date.day, date.hour),
+      TapoEnergyDataIntervalType.daily => DateTime(date.year, date.month, date.day),
+      TapoEnergyDataIntervalType.monthly => DateTime(date.year, date.month, 1),
+    };
+  }
+
+  int _pointsBefore(DateTime boundary) {
+    for (var index = 0; index < values.length; index += 1) {
+      if (!_pointStartForIndex(index).isBefore(boundary)) {
+        return index;
+      }
+    }
+    return values.length;
+  }
+
+  static DateTime _addMonths(DateTime date, int months) {
+    return DateTime(date.year, date.month + months, date.day);
   }
 }
 

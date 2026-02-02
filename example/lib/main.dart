@@ -254,8 +254,10 @@ class _MyHomePageState extends State<MyHomePage> {
     });
 
     try {
-      final start = _startOfDay(_energyStartDate);
-      final end = _startOfDay(_energyEndDate);
+      final now = DateTime.now();
+      final clamped = _clampEnergyRange(_energyStartDate, _energyEndDate, now);
+      final start = _startOfDay(clamped.start);
+      final end = _startOfDay(clamped.end);
       if (end.isBefore(start)) {
         throw ArgumentError('End date must be on or after start date.');
       }
@@ -271,6 +273,13 @@ class _MyHomePageState extends State<MyHomePage> {
         TapoEnergyDataIntervalType.daily => TapoEnergyDataInterval.daily(quarterStart: _quarterStart(start)),
         TapoEnergyDataIntervalType.monthly => TapoEnergyDataInterval.monthly(yearStart: DateTime(start.year, 1, 1)),
       };
+
+      if (start != _energyStartDate || end != _energyEndDate) {
+        setState(() {
+          _energyStartDate = start;
+          _energyEndDate = end;
+        });
+      }
 
       final data = await client.getEnergyData(interval);
       setState(() {
@@ -310,12 +319,53 @@ class _MyHomePageState extends State<MyHomePage> {
     return DateTime(date.year, date.month, date.day);
   }
 
+  DateTime _energyWindowStart(DateTime now) {
+    return switch (_energyIntervalType) {
+      TapoEnergyDataIntervalType.hourly => now.subtract(const Duration(days: 7)),
+      TapoEnergyDataIntervalType.daily => _addMonths(now, -3),
+      TapoEnergyDataIntervalType.monthly => _addMonths(now, -12),
+    };
+  }
+
+  ({DateTime start, DateTime end}) _clampEnergyRange(DateTime start, DateTime end, DateTime now) {
+    final windowStart = _startOfDay(_energyWindowStart(now));
+    final windowEnd = _startOfDay(now);
+    var clampedStart = start;
+    var clampedEnd = end;
+
+    if (clampedStart.isBefore(windowStart)) {
+      clampedStart = windowStart;
+    }
+    if (clampedEnd.isBefore(windowStart)) {
+      clampedEnd = windowStart;
+    }
+    if (clampedStart.isAfter(windowEnd)) {
+      clampedStart = windowEnd;
+    }
+    if (clampedEnd.isAfter(windowEnd)) {
+      clampedEnd = windowEnd;
+    }
+    if (clampedEnd.isBefore(clampedStart)) {
+      clampedEnd = clampedStart;
+    }
+
+    return (start: clampedStart, end: clampedEnd);
+  }
+
+  DateTime _addMonths(DateTime date, int months) {
+    return DateTime(date.year, date.month + months, date.day);
+  }
+
   Future<void> _pickStartDate() async {
+    final now = DateTime.now();
+    final windowStart = _startOfDay(_energyWindowStart(now));
+    final windowEnd = _startOfDay(now);
+    final initialDate = _energyStartDate.isBefore(windowStart) ? windowStart : _energyStartDate;
     final picked = await showDatePicker(
       context: context,
-      initialDate: _energyStartDate,
-      firstDate: DateTime(2015),
-      lastDate: DateTime.now(),
+      initialDate: initialDate.isAfter(windowEnd) ? windowEnd : initialDate,
+      firstDate: windowStart,
+      lastDate: windowEnd,
     );
     if (picked == null) {
       return;
@@ -329,11 +379,15 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _pickEndDate() async {
+    final now = DateTime.now();
+    final windowStart = _startOfDay(_energyWindowStart(now));
+    final windowEnd = _startOfDay(now);
+    final initialDate = _energyEndDate.isBefore(windowStart) ? windowStart : _energyEndDate;
     final picked = await showDatePicker(
       context: context,
-      initialDate: _energyEndDate,
-      firstDate: DateTime(2015),
-      lastDate: DateTime.now(),
+      initialDate: initialDate.isAfter(windowEnd) ? windowEnd : initialDate,
+      firstDate: windowStart,
+      lastDate: windowEnd,
     );
     if (picked == null) {
       return;
@@ -382,9 +436,17 @@ class _MyHomePageState extends State<MyHomePage> {
     final end = _startOfDay(_energyEndDate);
     final now = data.localDateTime ?? DateTime.now();
     final normalizedEnd = end.isAfter(now) ? _startOfDay(now) : end;
+    final windowStart = _energyWindowStart(now);
 
     return data.points.where((point) {
-      return switch (_energyIntervalType) {
+      final withinWindow = switch (_energyIntervalType) {
+        TapoEnergyDataIntervalType.hourly => !point.start.isBefore(windowStart),
+        TapoEnergyDataIntervalType.daily => !point.start.isBefore(_startOfDay(windowStart)),
+        TapoEnergyDataIntervalType.monthly =>
+          !point.start.isBefore(DateTime(windowStart.year, windowStart.month, 1)),
+      };
+
+      final withinRange = switch (_energyIntervalType) {
         TapoEnergyDataIntervalType.hourly =>
           !point.start.isBefore(DateTime(start.year, start.month, start.day, 0)) &&
               !point.start.isAfter(DateTime(normalizedEnd.year, normalizedEnd.month, normalizedEnd.day, 23)),
@@ -393,6 +455,8 @@ class _MyHomePageState extends State<MyHomePage> {
           !point.start.isBefore(DateTime(start.year, start.month, 1)) &&
               !point.start.isAfter(DateTime(normalizedEnd.year, normalizedEnd.month, 1)),
       };
+
+      return withinWindow && withinRange;
     }).toList();
   }
 
@@ -503,6 +567,10 @@ class _MyHomePageState extends State<MyHomePage> {
                       }
                       setState(() {
                         _energyIntervalType = value;
+                        final now = DateTime.now();
+                        final clamped = _clampEnergyRange(_energyStartDate, _energyEndDate, now);
+                        _energyStartDate = clamped.start;
+                        _energyEndDate = clamped.end;
                       });
                     },
             ),
