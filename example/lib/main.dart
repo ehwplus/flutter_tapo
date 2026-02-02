@@ -41,6 +41,10 @@ class _MyHomePageState extends State<MyHomePage> {
   TapoEnergyData? _energyData;
   bool _isLoading = false;
   String? _error;
+  bool _isScanning = false;
+  int _scanProgress = 0;
+  int _scanTotal = 0;
+  List<String> _discoveredIps = const [];
   TapoEnergyDataIntervalType _energyIntervalType = TapoEnergyDataIntervalType.daily;
   DateTime _energyStartDate = DateTime.now().subtract(const Duration(days: 7));
   DateTime _energyEndDate = DateTime.now();
@@ -239,6 +243,52 @@ class _MyHomePageState extends State<MyHomePage> {
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _scanForDevices() async {
+    if (_isScanning) {
+      return;
+    }
+
+    setState(() {
+      _isScanning = true;
+      _scanProgress = 0;
+      _scanTotal = 254;
+      _discoveredIps = const [];
+      _error = null;
+    });
+
+    try {
+      final results = await TapoDeviceDiscovery.scanSubnet(
+        base: '192.168.178',
+        onProgress: (scanned, total) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _scanProgress = scanned;
+            _scanTotal = total;
+          });
+        },
+      );
+      if (mounted) {
+        setState(() {
+          _discoveredIps = results;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isScanning = false;
+        });
+      }
     }
   }
 
@@ -442,8 +492,7 @@ class _MyHomePageState extends State<MyHomePage> {
       final withinWindow = switch (_energyIntervalType) {
         TapoEnergyDataIntervalType.hourly => !point.start.isBefore(windowStart),
         TapoEnergyDataIntervalType.daily => !point.start.isBefore(_startOfDay(windowStart)),
-        TapoEnergyDataIntervalType.monthly =>
-          !point.start.isBefore(DateTime(windowStart.year, windowStart.month, 1)),
+        TapoEnergyDataIntervalType.monthly => !point.start.isBefore(DateTime(windowStart.year, windowStart.month, 1)),
       };
 
       final withinRange = switch (_energyIntervalType) {
@@ -472,6 +521,46 @@ class _MyHomePageState extends State<MyHomePage> {
         controller: _scrollController,
         padding: const EdgeInsets.all(16),
         children: [
+          Text('Discovery', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton(
+                onPressed: _isScanning ? null : _scanForDevices,
+                child: Text(_isScanning ? 'Scanning...' : 'Scan devices'),
+              ),
+              if (_isScanning) Text('$_scanProgress/$_scanTotal'),
+            ],
+          ),
+          if (!_isScanning && _scanTotal > 0 && _discoveredIps.isEmpty) ...[
+            const SizedBox(height: 8),
+            Text('No devices found in 192.168.178.0/24.', style: Theme.of(context).textTheme.bodySmall),
+          ],
+          if (_discoveredIps.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Card(
+              child: Column(
+                children: [
+                  for (final ip in _discoveredIps)
+                    ListTile(
+                      title: Text(ip),
+                      trailing: TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _ipController.text = ip;
+                          });
+                        },
+                        child: const Text('Use'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 24),
           Text('Connection', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 12),
           TextField(

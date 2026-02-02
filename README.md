@@ -7,7 +7,7 @@ encrypted requests, and a minimal device API.
 ## Known limitations
 
 * Only tested inside the local network.
-* Device discovery is not implemented; you need the device IP.
+* Device discovery is limited to local subnet probing; it may miss devices if they do not respond to component negotiation.
 * This is a first iteration focused on smart plugs (P115).
 
 ## Features
@@ -16,6 +16,8 @@ encrypted requests, and a minimal device API.
 * Fetch device info (model, state, nickname).
 * Toggle power state.
 * Fetch energy usage for P110/P115 devices.
+* Fetch energy data series (hourly/daily/monthly) with client-side trimming.
+* Discover local Tapo devices on a subnet.
 
 ## Getting started
 
@@ -38,6 +40,28 @@ await client.authenticate(
 final info = await client.getDeviceInfo();
 await client.setPowerState(true);
 final energy = await client.getEnergyUsage();
+```
+
+### Energy data series
+
+```dart
+final interval = TapoEnergyDataInterval.daily(
+  quarterStart: DateTime(2025, 1, 1),
+);
+final data = await client.getEnergyData(interval);
+for (final point in data.points) {
+  print('${point.start}: ${point.energyWh} Wh');
+}
+```
+
+### Device discovery
+
+```dart
+final devices = await TapoDeviceDiscovery.scanSubnet(
+  base: '192.168.178',
+  onProgress: (scanned, total) => print('$scanned/$total'),
+);
+print(devices);
 ```
 
 Check the `example` app for a full working flow.
