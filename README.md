@@ -18,6 +18,7 @@ encrypted requests, and a minimal device API.
 * Fetch energy usage for P110/P115 devices.
 * Fetch energy data series (hourly/daily/monthly) with client-side trimming.
 * Discover local Tapo devices on a subnet.
+* Derive device activity windows from hourly energy data.
 
 ## Getting started
 
@@ -51,6 +52,24 @@ final interval = TapoEnergyDataInterval.daily(
 final data = await client.getEnergyData(interval);
 for (final point in data.points) {
   print('${point.start}: ${point.energyWh} Wh');
+}
+```
+
+### Activity intervals (washer/dryer detection)
+
+When you request hourly energy data, you can derive activity windows by grouping
+consecutive hours with meaningful usage. Hours below 2W are ignored so standby
+power does not create false activities.
+
+```dart
+final interval = TapoEnergyDataInterval.activity(
+  startDate: DateTime(2025, 1, 1),
+  endDate: DateTime(2025, 1, 2),
+);
+final data = await client.getEnergyData(interval);
+
+for (final activity in data.activities) {
+  print('${activity.start} → ${activity.end}');
 }
 ```
 

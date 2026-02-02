@@ -322,6 +322,7 @@ class _MyHomePageState extends State<MyHomePage> {
         TapoEnergyDataIntervalType.hourly => TapoEnergyDataInterval.hourly(startDate: start, endDate: end),
         TapoEnergyDataIntervalType.daily => TapoEnergyDataInterval.daily(quarterStart: _quarterStart(start)),
         TapoEnergyDataIntervalType.monthly => TapoEnergyDataInterval.monthly(yearStart: DateTime(start.year, 1, 1)),
+        TapoEnergyDataIntervalType.activity => TapoEnergyDataInterval.activity(startDate: start, endDate: end),
       };
 
       if (start != _energyStartDate || end != _energyEndDate) {
@@ -374,6 +375,7 @@ class _MyHomePageState extends State<MyHomePage> {
       TapoEnergyDataIntervalType.hourly => now.subtract(const Duration(days: 7)),
       TapoEnergyDataIntervalType.daily => _addMonths(now, -3),
       TapoEnergyDataIntervalType.monthly => _addMonths(now, -12),
+      TapoEnergyDataIntervalType.activity => now.subtract(const Duration(days: 7)),
     };
   }
 
@@ -470,7 +472,17 @@ class _MyHomePageState extends State<MyHomePage> {
         '${_formatDate(point.start)} ${point.start.hour.toString().padLeft(2, '0')}:00',
       TapoEnergyDataIntervalType.daily => _formatDate(point.start),
       TapoEnergyDataIntervalType.monthly => '${point.start.year}-${point.start.month.toString().padLeft(2, '0')}',
+      TapoEnergyDataIntervalType.activity =>
+        '${_formatDate(point.start)} ${point.start.hour.toString().padLeft(2, '0')}:00',
     };
+  }
+
+  String _formatActivityLabel(TapoEnergyActivity activity) {
+    String formatHour(DateTime date) {
+      return '${_formatDate(date)} ${date.hour.toString().padLeft(2, '0')}:00';
+    }
+
+    return '${formatHour(activity.start)} → ${formatHour(activity.end)}';
   }
 
   String _intervalLabel(TapoEnergyDataIntervalType type) {
@@ -478,6 +490,7 @@ class _MyHomePageState extends State<MyHomePage> {
       TapoEnergyDataIntervalType.hourly => 'Hourly',
       TapoEnergyDataIntervalType.daily => 'Daily',
       TapoEnergyDataIntervalType.monthly => 'Monthly',
+      TapoEnergyDataIntervalType.activity => 'Activity',
     };
   }
 
@@ -493,6 +506,7 @@ class _MyHomePageState extends State<MyHomePage> {
         TapoEnergyDataIntervalType.hourly => !point.start.isBefore(windowStart),
         TapoEnergyDataIntervalType.daily => !point.start.isBefore(_startOfDay(windowStart)),
         TapoEnergyDataIntervalType.monthly => !point.start.isBefore(DateTime(windowStart.year, windowStart.month, 1)),
+        TapoEnergyDataIntervalType.activity => !point.start.isBefore(windowStart),
       };
 
       final withinRange = switch (_energyIntervalType) {
@@ -503,6 +517,9 @@ class _MyHomePageState extends State<MyHomePage> {
         TapoEnergyDataIntervalType.monthly =>
           !point.start.isBefore(DateTime(start.year, start.month, 1)) &&
               !point.start.isAfter(DateTime(normalizedEnd.year, normalizedEnd.month, 1)),
+        TapoEnergyDataIntervalType.activity =>
+          !point.start.isBefore(DateTime(start.year, start.month, start.day, 0)) &&
+              !point.start.isAfter(DateTime(normalizedEnd.year, normalizedEnd.month, normalizedEnd.day, 23)),
       };
 
       return withinWindow && withinRange;
@@ -692,8 +709,12 @@ class _MyHomePageState extends State<MyHomePage> {
                         '(${_formatDate(_energyStartDate)} → ${_formatDate(_energyEndDate)})',
                       ),
                       const SizedBox(height: 8),
-                      for (final point in _filteredEnergyPoints(energyData))
-                        Text('${_formatPointLabel(point)}: ${_formatEnergy(point.energyWh)}'),
+                      if (_energyIntervalType == TapoEnergyDataIntervalType.activity)
+                        for (final activity in energyData.activities)
+                          Text(_formatActivityLabel(activity))
+                      else
+                        for (final point in _filteredEnergyPoints(energyData))
+                          Text('${_formatPointLabel(point)}: ${_formatEnergy(point.energyWh)}'),
                     ],
                   ),
                 ),

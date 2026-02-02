@@ -1,4 +1,4 @@
-enum TapoEnergyDataIntervalType { hourly, daily, monthly }
+enum TapoEnergyDataIntervalType { hourly, daily, monthly, activity }
 
 class TapoEnergyDataInterval {
   const TapoEnergyDataInterval._({
@@ -9,6 +9,32 @@ class TapoEnergyDataInterval {
   });
 
   factory TapoEnergyDataInterval.hourly({required DateTime startDate, required DateTime endDate, int interval = 60}) {
+    return _hourlyLike(
+      type: TapoEnergyDataIntervalType.hourly,
+      startDate: startDate,
+      endDate: endDate,
+      interval: interval,
+    );
+  }
+
+  factory TapoEnergyDataInterval.activity({required DateTime startDate, required DateTime endDate, int interval = 60}) {
+    return _hourlyLike(
+      type: TapoEnergyDataIntervalType.activity,
+      startDate: startDate,
+      endDate: endDate,
+      interval: interval,
+    );
+  }
+
+  static TapoEnergyDataInterval _hourlyLike({
+    required TapoEnergyDataIntervalType type,
+    required DateTime startDate,
+    required DateTime endDate,
+    required int interval,
+  }) {
+    if (type != TapoEnergyDataIntervalType.hourly && type != TapoEnergyDataIntervalType.activity) {
+      throw ArgumentError('Hourly-like intervals must be hourly or activity.');
+    }
     final normalizedStart = _startOfDay(startDate);
     final normalizedEnd = _startOfDay(endDate);
     if (normalizedEnd.isBefore(normalizedStart)) {
@@ -18,7 +44,7 @@ class TapoEnergyDataInterval {
       throw ArgumentError('Hourly interval must not exceed 8 days.');
     }
     return TapoEnergyDataInterval._(
-      type: TapoEnergyDataIntervalType.hourly,
+      type: type,
       startDate: normalizedStart,
       endDate: _endOfDay(endDate),
       interval: interval,
@@ -119,6 +145,14 @@ class TapoEnergyData {
   final int? endTimestamp;
   final String? localTime;
 
+  static const int _activityMinPowerW = 2;
+
+  bool get _isHourlyLike =>
+      intervalType == TapoEnergyDataIntervalType.hourly || intervalType == TapoEnergyDataIntervalType.activity;
+
+  TapoEnergyDataIntervalType get _normalizedIntervalType =>
+      _isHourlyLike ? TapoEnergyDataIntervalType.hourly : intervalType;
+
   DateTime? get localDateTime {
     final value = localTime;
     if (value == null) {
@@ -158,8 +192,9 @@ class TapoEnergyData {
       return trimmed;
     }
 
-    final newStart =
-        drop >= trimmed.values.length ? trimmed._alignToInterval(windowStart) : trimmed._pointStartForIndex(drop);
+    final newStart = drop >= trimmed.values.length
+        ? trimmed._alignToInterval(windowStart)
+        : trimmed._pointStartForIndex(drop);
     final newValues = drop >= trimmed.values.length ? const <int>[] : trimmed.values.sublist(drop);
     final newEnd = newValues.isEmpty ? null : trimmed._pointStartForIndex(drop + newValues.length - 1);
 
@@ -180,14 +215,53 @@ class TapoEnergyData {
     });
   }
 
+  List<TapoEnergyActivity> get activities {
+    if (!_isHourlyLike || values.isEmpty) {
+      return const [];
+    }
+
+    final activities = <TapoEnergyActivity>[];
+    int? currentStartIndex;
+    final minEnergyWh = _activityMinEnergyWh();
+
+    for (var index = 0; index < values.length; index += 1) {
+      final hasEnergy = values[index].toDouble() >= minEnergyWh;
+      if (hasEnergy) {
+        currentStartIndex ??= index;
+        continue;
+      }
+      if (currentStartIndex != null) {
+        activities.add(_buildActivity(currentStartIndex, index));
+        currentStartIndex = null;
+      }
+    }
+
+    if (currentStartIndex != null) {
+      activities.add(_buildActivity(currentStartIndex, values.length));
+    }
+
+    return activities;
+  }
+
+  TapoEnergyActivity _buildActivity(int startIndex, int endExclusiveIndex) {
+    final start = _pointStartForIndex(startIndex);
+    final durationHours = endExclusiveIndex - startIndex;
+    final end = start.add(Duration(hours: durationHours));
+    return TapoEnergyActivity(start: start, end: end);
+  }
+
+  double _activityMinEnergyWh() {
+    final intervalMinutes = interval ?? 60;
+    return _activityMinPowerW * (intervalMinutes / 60);
+  }
+
   int _pointsThrough(DateTime now) {
     final start = startDate;
-    final diff = switch (intervalType) {
-      TapoEnergyDataIntervalType.hourly => DateTime(now.year, now.month, now.day, now.hour)
-          .difference(start)
-          .inHours,
-      TapoEnergyDataIntervalType.daily =>
-        DateTime(now.year, now.month, now.day).difference(start).inDays,
+    final diff = switch (_normalizedIntervalType) {
+      TapoEnergyDataIntervalType.hourly => DateTime(now.year, now.month, now.day, now.hour).difference(start).inHours,
+
+      TapoEnergyDataIntervalType.activity => DateTime(now.year, now.month, now.day).difference(start).inDays,
+      TapoEnergyDataIntervalType.daily => DateTime(now.year, now.month, now.day).difference(start).inDays,
       TapoEnergyDataIntervalType.monthly =>
         (DateTime(now.year, now.month, 1).year - start.year) * 12 +
             (DateTime(now.year, now.month, 1).month - start.month),
@@ -219,7 +293,8 @@ class TapoEnergyData {
   }
 
   DateTime _pointStartForIndex(int index) {
-    return switch (intervalType) {
+    return switch (_normalizedIntervalType) {
+      TapoEnergyDataIntervalType.activity => startDate.add(Duration(hours: index)),
       TapoEnergyDataIntervalType.hourly => startDate.add(Duration(hours: index)),
       TapoEnergyDataIntervalType.daily => DateTime(startDate.year, startDate.month, startDate.day + index),
       TapoEnergyDataIntervalType.monthly => DateTime(startDate.year, startDate.month + index, 1),
@@ -227,7 +302,8 @@ class TapoEnergyData {
   }
 
   DateTime _windowStart(DateTime now) {
-    return switch (intervalType) {
+    return switch (_normalizedIntervalType) {
+      TapoEnergyDataIntervalType.activity => now.subtract(const Duration(days: 7)),
       TapoEnergyDataIntervalType.hourly => now.subtract(const Duration(days: 7)),
       TapoEnergyDataIntervalType.daily => _addMonths(DateTime(now.year, now.month, now.day), -3),
       TapoEnergyDataIntervalType.monthly => _addMonths(DateTime(now.year, now.month, now.day), -12),
@@ -235,7 +311,8 @@ class TapoEnergyData {
   }
 
   DateTime _alignToInterval(DateTime date) {
-    return switch (intervalType) {
+    return switch (_normalizedIntervalType) {
+      TapoEnergyDataIntervalType.activity => DateTime(date.year, date.month, date.day, date.hour),
       TapoEnergyDataIntervalType.hourly => DateTime(date.year, date.month, date.day, date.hour),
       TapoEnergyDataIntervalType.daily => DateTime(date.year, date.month, date.day),
       TapoEnergyDataIntervalType.monthly => DateTime(date.year, date.month, 1),
@@ -261,4 +338,11 @@ class TapoEnergyDataPoint {
 
   final DateTime start;
   final int energyWh;
+}
+
+class TapoEnergyActivity {
+  const TapoEnergyActivity({required this.start, required this.end});
+
+  final DateTime start;
+  final DateTime end;
 }
