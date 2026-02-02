@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../core/tapo_exception.dart';
 import '../crypto/tapo_cipher.dart';
 import '../model/tapo_device_info.dart';
+import '../model/tapo_energy_data.dart';
 import '../model/tapo_energy_usage.dart';
 import '../protocol/tapo_klap.dart';
 import '../util/tapo_encoding.dart';
@@ -178,6 +179,18 @@ abstract class TapoApiClient {
     final response = await _sendRequest(payload, requiresToken: true);
     log('Energy usage response: ${jsonEncode(response)}');
     return TapoEnergyUsage.fromJson(_extractResult(response));
+  }
+
+  Future<TapoEnergyData> getEnergyData(TapoEnergyDataInterval interval) async {
+    final payload = _buildPayload(
+      'get_energy_data',
+      params: interval.toParams(),
+      includeRequestTimeMils: true,
+    );
+    log('Energy data request: ${jsonEncode(payload)}');
+    final response = await _sendRequest(payload, requiresToken: true);
+    log('Energy data response: ${jsonEncode(response)}');
+    return TapoEnergyData.fromJson(_extractResult(response), interval: interval);
   }
 
   Future<Map<String, dynamic>> _sendRequest(Map<String, dynamic> payload, {required bool requiresToken}) async {

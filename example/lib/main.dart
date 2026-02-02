@@ -38,6 +38,7 @@ class _MyHomePageState extends State<MyHomePage> {
   HttpTapoApiClient? _client;
   TapoDeviceInfo? _deviceInfo;
   TapoEnergyUsage? _energyUsage;
+  TapoEnergyData? _dailyEnergyData;
   bool _isLoading = false;
   String? _error;
 
@@ -96,6 +97,7 @@ class _MyHomePageState extends State<MyHomePage> {
       _isLoading = true;
       _error = null;
       _energyUsage = null;
+      _dailyEnergyData = null;
     });
 
     Uri? deviceUri;
@@ -237,10 +239,67 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  Future<void> _loadDailyEnergyData() async {
+    final client = _client;
+    if (client == null) {
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final quarterStart = _quarterStart(DateTime.now());
+      final interval = TapoEnergyDataInterval.daily(quarterStart: quarterStart);
+      final data = await client.getEnergyData(interval);
+      setState(() {
+        _dailyEnergyData = data;
+      });
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (_scrollController.hasClients) {
+        await _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    } catch (error) {
+      setState(() {
+        _error = error.toString();
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  DateTime _quarterStart(DateTime date) {
+    final quarterMonth = ((date.month - 1) ~/ 3) * 3 + 1;
+    return DateTime(date.year, quarterMonth, 1);
+  }
+
+  String _formatDate(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
+  String _formatEnergy(int wh) {
+    if (wh >= 1000) {
+      final kwh = (wh / 1000).toStringAsFixed(2);
+      return '$kwh kWh';
+    }
+    return '$wh Wh';
+  }
+
   @override
   Widget build(BuildContext context) {
     final deviceInfo = _deviceInfo;
     final energyUsage = _energyUsage;
+    final dailyEnergyData = _dailyEnergyData;
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
@@ -310,6 +369,10 @@ class _MyHomePageState extends State<MyHomePage> {
                   onPressed: _isLoading ? null : _loadEnergyUsage,
                   child: const Text('Load energy usage'),
                 ),
+                OutlinedButton(
+                  onPressed: _isLoading ? null : _loadDailyEnergyData,
+                  child: const Text('Load daily energy data'),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -329,6 +392,23 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                 ),
               ),
+            if (dailyEnergyData != null) ...[
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Daily energy (from ${_formatDate(dailyEnergyData.startDate)})'),
+                      const SizedBox(height: 8),
+                      for (final point in dailyEnergyData.points)
+                        Text('${_formatDate(point.start)}: ${_formatEnergy(point.energyWh)}'),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),
