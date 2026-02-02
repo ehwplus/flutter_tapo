@@ -38,9 +38,12 @@ class _MyHomePageState extends State<MyHomePage> {
   HttpTapoApiClient? _client;
   TapoDeviceInfo? _deviceInfo;
   TapoEnergyUsage? _energyUsage;
-  TapoEnergyData? _dailyEnergyData;
+  TapoEnergyData? _energyData;
   bool _isLoading = false;
   String? _error;
+  TapoEnergyDataIntervalType _energyIntervalType = TapoEnergyDataIntervalType.daily;
+  DateTime _energyStartDate = DateTime.now().subtract(const Duration(days: 7));
+  DateTime _energyEndDate = DateTime.now();
 
   bool get _isConnected => _client?.isAuthenticated == true;
 
@@ -97,7 +100,7 @@ class _MyHomePageState extends State<MyHomePage> {
       _isLoading = true;
       _error = null;
       _energyUsage = null;
-      _dailyEnergyData = null;
+      _energyData = null;
     });
 
     Uri? deviceUri;
@@ -239,7 +242,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> _loadDailyEnergyData() async {
+  Future<void> _loadEnergyData() async {
     final client = _client;
     if (client == null) {
       return;
@@ -251,11 +254,27 @@ class _MyHomePageState extends State<MyHomePage> {
     });
 
     try {
-      final quarterStart = _quarterStart(DateTime.now());
-      final interval = TapoEnergyDataInterval.daily(quarterStart: quarterStart);
+      final start = _startOfDay(_energyStartDate);
+      final end = _startOfDay(_energyEndDate);
+      if (end.isBefore(start)) {
+        throw ArgumentError('End date must be on or after start date.');
+      }
+      if (_energyIntervalType == TapoEnergyDataIntervalType.daily && !_isSameQuarter(start, end)) {
+        throw ArgumentError('Daily energy data must stay within a single quarter.');
+      }
+      if (_energyIntervalType == TapoEnergyDataIntervalType.monthly && start.year != end.year) {
+        throw ArgumentError('Monthly energy data must stay within a single year.');
+      }
+
+      final interval = switch (_energyIntervalType) {
+        TapoEnergyDataIntervalType.hourly => TapoEnergyDataInterval.hourly(startDate: start, endDate: end),
+        TapoEnergyDataIntervalType.daily => TapoEnergyDataInterval.daily(quarterStart: _quarterStart(start)),
+        TapoEnergyDataIntervalType.monthly => TapoEnergyDataInterval.monthly(yearStart: DateTime(start.year, 1, 1)),
+      };
+
       final data = await client.getEnergyData(interval);
       setState(() {
-        _dailyEnergyData = data;
+        _energyData = data;
       });
       await Future.delayed(const Duration(milliseconds: 100));
       if (_scrollController.hasClients) {
@@ -281,6 +300,52 @@ class _MyHomePageState extends State<MyHomePage> {
     return DateTime(date.year, quarterMonth, 1);
   }
 
+  bool _isSameQuarter(DateTime first, DateTime second) {
+    final startA = _quarterStart(first);
+    final startB = _quarterStart(second);
+    return startA.year == startB.year && startA.month == startB.month;
+  }
+
+  DateTime _startOfDay(DateTime date) {
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  Future<void> _pickStartDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _energyStartDate,
+      firstDate: DateTime(2015),
+      lastDate: DateTime.now(),
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      _energyStartDate = picked;
+      if (_energyEndDate.isBefore(picked)) {
+        _energyEndDate = picked;
+      }
+    });
+  }
+
+  Future<void> _pickEndDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _energyEndDate,
+      firstDate: DateTime(2015),
+      lastDate: DateTime.now(),
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      _energyEndDate = picked;
+      if (_energyStartDate.isAfter(picked)) {
+        _energyStartDate = picked;
+      }
+    });
+  }
+
   String _formatDate(DateTime date) {
     final month = date.month.toString().padLeft(2, '0');
     final day = date.day.toString().padLeft(2, '0');
@@ -295,11 +360,47 @@ class _MyHomePageState extends State<MyHomePage> {
     return '$wh Wh';
   }
 
+  String _formatPointLabel(TapoEnergyDataPoint point) {
+    return switch (_energyIntervalType) {
+      TapoEnergyDataIntervalType.hourly =>
+        '${_formatDate(point.start)} ${point.start.hour.toString().padLeft(2, '0')}:00',
+      TapoEnergyDataIntervalType.daily => _formatDate(point.start),
+      TapoEnergyDataIntervalType.monthly => '${point.start.year}-${point.start.month.toString().padLeft(2, '0')}',
+    };
+  }
+
+  String _intervalLabel(TapoEnergyDataIntervalType type) {
+    return switch (type) {
+      TapoEnergyDataIntervalType.hourly => 'Hourly',
+      TapoEnergyDataIntervalType.daily => 'Daily',
+      TapoEnergyDataIntervalType.monthly => 'Monthly',
+    };
+  }
+
+  List<TapoEnergyDataPoint> _filteredEnergyPoints(TapoEnergyData data) {
+    final start = _startOfDay(_energyStartDate);
+    final end = _startOfDay(_energyEndDate);
+    final now = data.localDateTime ?? DateTime.now();
+    final normalizedEnd = end.isAfter(now) ? _startOfDay(now) : end;
+
+    return data.points.where((point) {
+      return switch (_energyIntervalType) {
+        TapoEnergyDataIntervalType.hourly =>
+          !point.start.isBefore(DateTime(start.year, start.month, start.day, 0)) &&
+              !point.start.isAfter(DateTime(normalizedEnd.year, normalizedEnd.month, normalizedEnd.day, 23)),
+        TapoEnergyDataIntervalType.daily => !point.start.isBefore(start) && !point.start.isAfter(normalizedEnd),
+        TapoEnergyDataIntervalType.monthly =>
+          !point.start.isBefore(DateTime(start.year, start.month, 1)) &&
+              !point.start.isAfter(DateTime(normalizedEnd.year, normalizedEnd.month, 1)),
+      };
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final deviceInfo = _deviceInfo;
     final energyUsage = _energyUsage;
-    final dailyEnergyData = _dailyEnergyData;
+    final energyData = _energyData;
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
@@ -331,8 +432,12 @@ class _MyHomePageState extends State<MyHomePage> {
             Text(_error!, style: const TextStyle(color: Colors.redAccent)),
           ],
           const SizedBox(height: 24),
-          Text('Device', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: Text('Device Info', style: Theme.of(context).textTheme.titleLarge)),
+              IconButton(onPressed: _isLoading ? null : _refreshDeviceInfo, icon: Icon(Icons.refresh)),
+            ],
+          ),
           if (!_isConnected)
             Text('Not connected yet.', style: Theme.of(context).textTheme.bodySmall)
           else ...[
@@ -352,30 +457,13 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
               ),
             ),
-            SwitchListTile(
-              title: const Text('Power'),
-              value: deviceInfo?.deviceOn ?? false,
-              onChanged: _isLoading ? null : _togglePower,
-            ),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
+            const SizedBox(height: 12),
+            Row(
               children: [
-                FilledButton(
-                  onPressed: _isLoading ? null : _refreshDeviceInfo,
-                  child: const Text('Refresh device info'),
-                ),
-                OutlinedButton(
-                  onPressed: _isLoading ? null : _loadEnergyUsage,
-                  child: const Text('Load energy usage'),
-                ),
-                OutlinedButton(
-                  onPressed: _isLoading ? null : _loadDailyEnergyData,
-                  child: const Text('Load daily energy data'),
-                ),
+                Expanded(child: Text('Energy Usage', style: Theme.of(context).textTheme.titleLarge)),
+                IconButton(onPressed: _isLoading ? null : _loadEnergyUsage, icon: Icon(Icons.refresh)),
               ],
             ),
-            const SizedBox(height: 12),
             if (energyUsage != null)
               Card(
                 child: Padding(
@@ -384,15 +472,57 @@ class _MyHomePageState extends State<MyHomePage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('Local time: ${energyUsage.localTime ?? '-'}'),
-                      Text('Today runtime: ${energyUsage.todayRuntime ?? 0} min'),
-                      Text('Today energy: ${energyUsage.todayEnergy ?? 0} Wh'),
-                      Text('Month runtime: ${energyUsage.monthRuntime ?? 0} min'),
+                      Text('Today runtime: ${energyUsage.todayRuntime} min'),
+                      Text('Today energy: ${energyUsage.todayEnergy} Wh'),
+                      Text('Month runtime: ${energyUsage.monthRuntime} min'),
                       Text('Month energy: ${energyUsage.monthEnergy ?? 0} Wh'),
                     ],
                   ),
                 ),
               ),
-            if (dailyEnergyData != null) ...[
+            const SizedBox(height: 12),
+            Text('Turn on/off', style: Theme.of(context).textTheme.titleLarge),
+            SwitchListTile(
+              title: const Text('Power'),
+              value: deviceInfo?.deviceOn ?? false,
+              onChanged: _isLoading ? null : _togglePower,
+            ),
+            const SizedBox(height: 12),
+            Text('Energy data', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            DropdownButton<TapoEnergyDataIntervalType>(
+              value: _energyIntervalType,
+              items: TapoEnergyDataIntervalType.values
+                  .map((type) => DropdownMenuItem(value: type, child: Text(_intervalLabel(type))))
+                  .toList(),
+              onChanged: _isLoading
+                  ? null
+                  : (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        _energyIntervalType = value;
+                      });
+                    },
+            ),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: _isLoading ? null : _pickStartDate,
+                  child: Text('Start: ${_formatDate(_energyStartDate)}'),
+                ),
+                OutlinedButton(
+                  onPressed: _isLoading ? null : _pickEndDate,
+                  child: Text('End: ${_formatDate(_energyEndDate)}'),
+                ),
+                OutlinedButton(onPressed: _isLoading ? null : _loadEnergyData, child: const Text('Load energy data')),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (energyData != null) ...[
               const SizedBox(height: 12),
               Card(
                 child: Padding(
@@ -400,10 +530,13 @@ class _MyHomePageState extends State<MyHomePage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Daily energy (from ${_formatDate(dailyEnergyData.startDate)})'),
+                      Text(
+                        '${_intervalLabel(_energyIntervalType)} energy '
+                        '(${_formatDate(_energyStartDate)} → ${_formatDate(_energyEndDate)})',
+                      ),
                       const SizedBox(height: 8),
-                      for (final point in dailyEnergyData.points)
-                        Text('${_formatDate(point.start)}: ${_formatEnergy(point.energyWh)}'),
+                      for (final point in _filteredEnergyPoints(energyData))
+                        Text('${_formatPointLabel(point)}: ${_formatEnergy(point.energyWh)}'),
                     ],
                   ),
                 ),
