@@ -25,6 +25,28 @@ encrypted requests, and a minimal device API.
 You need the device IP address and your Tapo account email/password. The API
 communicates directly with the device over HTTP.
 
+## Platform setup (iOS)
+
+Because the library talks to local devices over HTTP, the platform needs
+explicit permissions:
+
+### iOS
+
+- Allow local networking in `Info.plist`:
+  - `NSAppTransportSecurity` → `NSAllowsLocalNetworking = true`
+- If you use device discovery or access local IPs, add:
+  - `NSLocalNetworkUsageDescription` (user-visible reason string)
+
+### macOS (not working right now)
+
+- Enable outbound network access in entitlements:
+    - `com.apple.security.network.client = true` (Debug & Release)
+    - Flutter uses `macos/Runner/DebugProfile.entitlements` and `macos/Runner/Release.entitlements`
+- Allow local networking in `Info.plist`:
+    - `NSAppTransportSecurity` → `NSAllowsLocalNetworking = true`
+- If you use device discovery or access local IPs, also add:
+    - `NSLocalNetworkUsageDescription` (user-visible reason string)
+
 ## Usage
 
 ```dart
