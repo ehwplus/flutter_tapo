@@ -482,7 +482,8 @@ class _MyHomePageState extends State<MyHomePage> {
       return '${_formatDate(date)} ${date.hour.toString().padLeft(2, '0')}:00';
     }
 
-    return '${formatHour(activity.start)} → ${formatHour(activity.end)}';
+    return '${formatHour(activity.start)} → ${formatHour(activity.end)} '
+        '(${_formatEnergy(activity.energyWh)})';
   }
 
   String _intervalLabel(TapoEnergyDataIntervalType type) {
@@ -710,7 +711,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       ),
                       const SizedBox(height: 8),
                       if (_energyIntervalType == TapoEnergyDataIntervalType.activity)
-                        for (final activity in energyData.activities)
+                        for (final activity in energyData.activities())
                           Text(_formatActivityLabel(activity))
                       else
                         for (final point in _filteredEnergyPoints(energyData))

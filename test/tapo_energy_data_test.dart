@@ -67,7 +67,7 @@ void main() {
       interval: interval,
     );
 
-    final activities = data.activities;
+    final activities = data.activities();
     expect(activities.length, 2);
     expect(activities[0].start, DateTime(2025, 1, 1, 1));
     expect(activities[0].end, DateTime(2025, 1, 1, 3));
@@ -85,8 +85,9 @@ void main() {
       interval: interval,
     );
 
-    expect(data.activities.length, 2);
-    expect(data.activities.first.start, DateTime(2025, 1, 1, 0));
+    final activities = data.activities();
+    expect(activities.length, 2);
+    expect(activities.first.start, DateTime(2025, 1, 1, 0));
   });
 
   test('ignores activity below 2W threshold', () {
@@ -99,9 +100,72 @@ void main() {
       interval: interval,
     );
 
-    final activities = data.activities;
+    final activities = data.activities();
     expect(activities.length, 1);
     expect(activities.first.start, DateTime(2025, 1, 1, 1));
     expect(activities.first.end, DateTime(2025, 1, 1, 2));
+  });
+
+  test('splits activity longer than default max duration', () {
+    final interval = TapoEnergyDataInterval.activity(
+      startDate: DateTime(2025, 1, 1),
+      endDate: DateTime(2025, 1, 1, 15),
+    );
+    final data = TapoEnergyData.fromJson(
+      {'data': [...List<int>.filled(14, 5), 0, 5]},
+      interval: interval,
+    );
+
+    final activities = data.activities();
+    expect(activities.length, 1);
+    expect(activities[0].start, DateTime(2025, 1, 1, 0));
+    expect(activities[0].end, DateTime(2025, 1, 1, 12));
+  });
+
+  test('returns no activities for constant draw', () {
+    final interval = TapoEnergyDataInterval.activity(
+      startDate: DateTime(2025, 1, 1),
+      endDate: DateTime(2025, 1, 1, 6),
+    );
+    final data = TapoEnergyData.fromJson(
+      {'data': List<int>.filled(7, 5)},
+      interval: interval,
+    );
+
+    expect(data.activities(), isEmpty);
+  });
+
+  test('starts new activity only after gap', () {
+    final interval = TapoEnergyDataInterval.activity(
+      startDate: DateTime(2025, 1, 1),
+      endDate: DateTime(2025, 1, 1, 6),
+    );
+    final data = TapoEnergyData.fromJson(
+      {'data': [5, 5, 5, 0, 5, 5, 0]},
+      interval: interval,
+    );
+
+    final activities = data.activities(minGap: const Duration(hours: 1));
+    expect(activities.length, 2);
+    expect(activities[0].start, DateTime(2025, 1, 1, 0));
+    expect(activities[0].end, DateTime(2025, 1, 1, 3));
+    expect(activities[1].start, DateTime(2025, 1, 1, 4));
+    expect(activities[1].end, DateTime(2025, 1, 1, 6));
+  });
+
+  test('rejects activity max duration over 24 hours', () {
+    final interval = TapoEnergyDataInterval.activity(
+      startDate: DateTime(2025, 1, 1),
+      endDate: DateTime(2025, 1, 1, 2),
+    );
+    final data = TapoEnergyData.fromJson(
+      {'data': [5, 5, 5]},
+      interval: interval,
+    );
+
+    expect(
+      () => data.activities(maxDuration: const Duration(hours: 25)),
+      throwsArgumentError,
+    );
   });
 }

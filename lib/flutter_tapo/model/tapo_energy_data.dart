@@ -215,7 +215,7 @@ class TapoEnergyData {
     });
   }
 
-  List<TapoEnergyActivity> get activities {
+  List<TapoEnergyActivity> activities({Duration? maxDuration, Duration? minGap}) {
     if (!_isHourlyLike || values.isEmpty) {
       return const [];
     }
@@ -223,21 +223,60 @@ class TapoEnergyData {
     final activities = <TapoEnergyActivity>[];
     int? currentStartIndex;
     final minEnergyWh = _activityMinEnergyWh();
+    final effectiveMaxDuration = _resolveMaxDuration(maxDuration);
+    final maxPoints = effectiveMaxDuration == null ? null : _maxPoints(effectiveMaxDuration);
+    final minGapPoints = _resolveMinGapPoints(minGap);
+    var gapCount = minGapPoints;
+    var sawGap = false;
 
     for (var index = 0; index < values.length; index += 1) {
       final hasEnergy = values[index].toDouble() >= minEnergyWh;
-      if (hasEnergy) {
-        currentStartIndex ??= index;
+      if (currentStartIndex != null) {
+        if (!hasEnergy) {
+          activities.add(_buildActivity(currentStartIndex, index));
+          currentStartIndex = null;
+          gapCount = 1;
+          if (gapCount >= minGapPoints) {
+            sawGap = true;
+          }
+          continue;
+        }
+
+        if (maxPoints != null) {
+          final length = index - currentStartIndex + 1;
+          if (length >= maxPoints) {
+            activities.add(_buildActivity(currentStartIndex, index + 1));
+            currentStartIndex = null;
+            gapCount = 0;
+            continue;
+          }
+        }
         continue;
       }
-      if (currentStartIndex != null) {
-        activities.add(_buildActivity(currentStartIndex, index));
-        currentStartIndex = null;
+
+      if (hasEnergy) {
+        if (gapCount >= minGapPoints) {
+          currentStartIndex = index;
+        }
+        continue;
+      }
+
+      if (gapCount < minGapPoints) {
+        gapCount += 1;
+        if (gapCount >= minGapPoints) {
+          sawGap = true;
+        }
+      } else {
+        sawGap = true;
       }
     }
 
     if (currentStartIndex != null) {
       activities.add(_buildActivity(currentStartIndex, values.length));
+    }
+
+    if (intervalType == TapoEnergyDataIntervalType.activity && !sawGap) {
+      return const [];
     }
 
     return activities;
@@ -247,7 +286,8 @@ class TapoEnergyData {
     final start = _pointStartForIndex(startIndex);
     final durationHours = endExclusiveIndex - startIndex;
     final end = start.add(Duration(hours: durationHours));
-    return TapoEnergyActivity(start: start, end: end);
+    final energyWh = _sumEnergy(startIndex, endExclusiveIndex);
+    return TapoEnergyActivity(start: start, end: end, energyWh: energyWh);
   }
 
   double _activityMinEnergyWh() {
@@ -255,12 +295,60 @@ class TapoEnergyData {
     return _activityMinPowerW * (intervalMinutes / 60);
   }
 
+  Duration? _resolveMaxDuration(Duration? maxDuration) {
+    if (!_isHourlyLike) {
+      return null;
+    }
+    final resolved =
+        maxDuration ?? (intervalType == TapoEnergyDataIntervalType.activity ? const Duration(hours: 12) : null);
+    if (resolved != null && resolved > const Duration(hours: 24)) {
+      throw ArgumentError('maxDuration must not exceed 24 hours.');
+    }
+    return resolved;
+  }
+
+  int _maxPoints(Duration maxDuration) {
+    final intervalMinutes = interval ?? 60;
+    final points = maxDuration.inMinutes ~/ intervalMinutes;
+    if (points < 1) {
+      throw ArgumentError('maxDuration must be at least one interval.');
+    }
+    return points;
+  }
+
+  int _resolveMinGapPoints(Duration? minGap) {
+    if (!_isHourlyLike) {
+      return 0;
+    }
+    final resolved = minGap ?? (intervalType == TapoEnergyDataIntervalType.activity ? _intervalDuration() : null);
+    if (resolved == null) {
+      return 0;
+    }
+    final intervalMinutes = interval ?? 60;
+    final points = (resolved.inMinutes / intervalMinutes).ceil();
+    if (points < 1) {
+      throw ArgumentError('minGap must be at least one interval.');
+    }
+    return points;
+  }
+
+  Duration _intervalDuration() {
+    return Duration(minutes: interval ?? 60);
+  }
+
+  int _sumEnergy(int startIndex, int endExclusiveIndex) {
+    var sum = 0;
+    for (var index = startIndex; index < endExclusiveIndex; index += 1) {
+      sum += values[index];
+    }
+    return sum;
+  }
+
   int _pointsThrough(DateTime now) {
     final start = startDate;
     final diff = switch (_normalizedIntervalType) {
+      TapoEnergyDataIntervalType.activity => DateTime(now.year, now.month, now.day, now.hour).difference(start).inHours,
       TapoEnergyDataIntervalType.hourly => DateTime(now.year, now.month, now.day, now.hour).difference(start).inHours,
-
-      TapoEnergyDataIntervalType.activity => DateTime(now.year, now.month, now.day).difference(start).inDays,
       TapoEnergyDataIntervalType.daily => DateTime(now.year, now.month, now.day).difference(start).inDays,
       TapoEnergyDataIntervalType.monthly =>
         (DateTime(now.year, now.month, 1).year - start.year) * 12 +
@@ -341,8 +429,9 @@ class TapoEnergyDataPoint {
 }
 
 class TapoEnergyActivity {
-  const TapoEnergyActivity({required this.start, required this.end});
+  const TapoEnergyActivity({required this.start, required this.end, required this.energyWh});
 
   final DateTime start;
   final DateTime end;
+  final int energyWh;
 }

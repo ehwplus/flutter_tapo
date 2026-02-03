@@ -81,7 +81,8 @@ for (final point in data.points) {
 
 When you request hourly energy data, you can derive activity windows by grouping
 consecutive hours with meaningful usage. Hours below 2W are ignored so standby
-power does not create false activities.
+power does not create false activities. By default, activities are capped at 12h
+and can be configured up to a maximum of 24h.
 
 ```dart
 final interval = TapoEnergyDataInterval.activity(
@@ -90,7 +91,7 @@ final interval = TapoEnergyDataInterval.activity(
 );
 final data = await client.getEnergyData(interval);
 
-for (final activity in data.activities) {
+for (final activity in data.activities()) {
   print('${activity.start} → ${activity.end}');
 }
 ```
