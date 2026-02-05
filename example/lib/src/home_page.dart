@@ -121,8 +121,8 @@ class _MyHomePageState extends State<HomePage> {
       port: deviceUri.hasPort ? deviceUri.port : (deviceUri.scheme == 'https' ? 443 : 80),
       useHttps: deviceUri.scheme == 'https',
       allowInsecureHttps: deviceUri.scheme == 'https',
-      useRawSocketForHandshake: false,
-      useRawSocketForKlapRequests: false,
+      useRawSocketForHandshake: true,
+      useRawSocketForKlapRequests: true,
     );
 
     try {
