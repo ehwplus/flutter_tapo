@@ -81,6 +81,9 @@ class HttpTapoApiClient extends TapoApiClient {
         url.scheme == 'http' &&
         _useRawSocketForHandshake &&
         _isHandshakePath(url.path)) {
+      if (kDebugMode) {
+        print('[HttpTapoApiClient] Using RAW SOCKET for handshake: $url');
+      }
       final rawResponse = await sendRawSocketRequest(
         host: url.host,
         port: url.port,
@@ -100,6 +103,9 @@ class HttpTapoApiClient extends TapoApiClient {
         url.scheme == 'http' &&
         _useRawSocketForKlapRequests &&
         _isKlapRequestPath(url.path)) {
+      if (kDebugMode) {
+        print('[HttpTapoApiClient] Using RAW SOCKET for KLAP request: $url');
+      }
       final rawResponse = await sendRawSocketRequest(
         host: url.host,
         port: url.port,
@@ -115,6 +121,9 @@ class HttpTapoApiClient extends TapoApiClient {
       );
     }
 
+    if (kDebugMode) {
+      print('[HttpTapoApiClient] Using STANDARD HTTP CLIENT for: $url');
+    }
     final request = http.Request('POST', url)
       ..headers.addAll(resolvedHeaders)
       ..bodyBytes = Uint8List.fromList(body)
