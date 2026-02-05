@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tapo/flutter_tapo.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -45,6 +48,7 @@ class _MyHomePageState extends State<MyHomePage> {
   int _scanProgress = 0;
   int _scanTotal = 0;
   List<String> _discoveredIps = const [];
+  String? _scannedNetwork;
   TapoEnergyDataIntervalType _energyIntervalType = TapoEnergyDataIntervalType.daily;
   DateTime _energyStartDate = DateTime.now().subtract(const Duration(days: 7));
   DateTime _energyEndDate = DateTime.now();
@@ -131,6 +135,8 @@ class _MyHomePageState extends State<MyHomePage> {
       port: deviceUri.hasPort ? deviceUri.port : (deviceUri.scheme == 'https' ? 443 : 80),
       useHttps: deviceUri.scheme == 'https',
       allowInsecureHttps: deviceUri.scheme == 'https',
+      useRawSocketForHandshake: false,
+      useRawSocketForKlapRequests: false,
     );
 
     try {
@@ -260,8 +266,72 @@ class _MyHomePageState extends State<MyHomePage> {
     });
 
     try {
+      // Get local network base by finding the device's own IP
+      String? networkBase;
+      try {
+        final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
+        if (kDebugMode) {
+          print('[Network Detection] Found ${interfaces.length} network interfaces');
+        }
+        for (final interface in interfaces) {
+          if (kDebugMode) {
+            print('[Network Detection] Checking interface: ${interface.name}');
+          }
+          for (final addr in interface.addresses) {
+            final ip = addr.address;
+            if (kDebugMode) {
+              print('[Network Detection]   Address: $ip');
+            }
+            // Skip loopback
+            if (ip.startsWith('127.')) {
+              if (kDebugMode) {
+                print('[Network Detection]     Skipped (loopback)');
+              }
+              continue;
+            }
+            // Extract first three octets (e.g., "192.168.1.50" -> "192.168.1")
+            final parts = ip.split('.');
+            if (parts.length == 4) {
+              networkBase = '${parts[0]}.${parts[1]}.${parts[2]}';
+              if (kDebugMode) {
+                print('[Network Detection]     Selected network base: $networkBase');
+              }
+              break;
+            }
+          }
+          if (networkBase != null) break;
+        }
+        if (networkBase != null) {
+          if (kDebugMode) {
+            print('[Network Detection] Successfully detected network: $networkBase.0/24');
+          }
+        } else {
+          if (kDebugMode) {
+            print('[Network Detection] No suitable network interface found, using fallback');
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          print('[Network Detection] Error detecting network: $e');
+          print('[Network Detection] Using fallback network');
+        }
+        // Fallback to common network if detection fails
+        networkBase = '192.168.1';
+      }
+
+      networkBase ??= '192.168.1'; // Final fallback
+      if (kDebugMode) {
+        print('[Network Detection] Final network base: $networkBase');
+      }
+
+      if (mounted) {
+        setState(() {
+          _error = 'Scanning network $networkBase.0/24...';
+        });
+      }
+
       final results = await TapoDeviceDiscovery.scanSubnet(
-        base: '192.168.178',
+        base: networkBase,
         onProgress: (scanned, total) {
           if (!mounted) {
             return;
@@ -275,6 +345,8 @@ class _MyHomePageState extends State<MyHomePage> {
       if (mounted) {
         setState(() {
           _discoveredIps = results;
+          _scannedNetwork = networkBase;
+          _error = null;
         });
       }
     } catch (error) {
@@ -555,7 +627,10 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
           if (!_isScanning && _scanTotal > 0 && _discoveredIps.isEmpty) ...[
             const SizedBox(height: 8),
-            Text('No devices found in 192.168.178.0/24.', style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              'No devices found in ${_scannedNetwork ?? "network"}.0/24.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ],
           if (_discoveredIps.isNotEmpty) ...[
             const SizedBox(height: 8),

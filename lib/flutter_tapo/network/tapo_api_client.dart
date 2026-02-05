@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/tapo_exception.dart';
@@ -408,7 +409,11 @@ abstract class TapoApiClient {
     throw TapoApiException(code, message, payload: response);
   }
 
-  void log(String message) {}
+  void log(String message) {
+    if (kDebugMode) {
+      print('[TapoApiClient] $message');
+    }
+  }
 
   Future<TapoProtocolType> _discoverProtocol() async {
     final attempts = <Map<String, dynamic>>[
