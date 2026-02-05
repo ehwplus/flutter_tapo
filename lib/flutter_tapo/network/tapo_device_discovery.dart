@@ -1,11 +1,41 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
+sealed class TapoSubnetScanEvent {
+  const TapoSubnetScanEvent();
+}
+
+class TapoSubnetDeviceCountEvent extends TapoSubnetScanEvent {
+  const TapoSubnetDeviceCountEvent({
+    required this.devicesFound,
+    required this.scanned,
+    required this.total,
+  });
+
+  final int devicesFound;
+  final int scanned;
+  final int total;
+}
+
+class TapoSubnetTapoCandidatesEvent extends TapoSubnetScanEvent {
+  const TapoSubnetTapoCandidatesEvent(this.candidates);
+
+  final List<String> candidates;
+}
+
+class TapoSubnetScanCompleteEvent extends TapoSubnetScanEvent {
+  const TapoSubnetScanCompleteEvent(this.devices);
+
+  final List<String> devices;
+}
+
 class TapoDeviceDiscovery {
   const TapoDeviceDiscovery._();
 
-  static Future<List<String>> scanSubnet({
+  /// Streams discovery events for the given subnet.
+  static Stream<TapoSubnetScanEvent> scanSubnet({
     String base = '192.168.178',
     int start = 1,
     int end = 254,
@@ -16,8 +46,7 @@ class TapoDeviceDiscovery {
     int probeAttempts = 2,
     Duration probeDelay = const Duration(milliseconds: 250),
     List<int> ports = const [80, 443],
-    void Function(int scanned, int total)? onProgress,
-  }) async {
+  }) {
     _validateBase(base);
     if (start < 1 || end > 254 || end < start) {
       throw ArgumentError('start/end must be within 1..254 and start <= end.');
@@ -33,33 +62,80 @@ class TapoDeviceDiscovery {
     }
 
     final ips = List<String>.generate(end - start + 1, (index) => '$base.${start + index}');
-    final queue = ListQueue<String>.from(ips);
-    final found = <String>{};
-    var scanned = 0;
+    final controller = StreamController<TapoSubnetScanEvent>();
+    var canceled = false;
 
-    Future<void> worker() async {
-      while (queue.isNotEmpty) {
-        final ip = queue.removeFirst();
-        final isTapo = await _probeTapo(
-          ip,
-          ports: ports,
-          timeout: timeout,
-          warmupAttempts: warmupAttempts,
-          warmupDelay: warmupDelay,
-          probeAttempts: probeAttempts,
-          probeDelay: probeDelay,
-        );
-        if (isTapo) {
-          found.add(ip);
-        }
-        scanned += 1;
-        onProgress?.call(scanned, ips.length);
+    void emit(TapoSubnetScanEvent event) {
+      if (canceled || controller.isClosed) {
+        return;
       }
+      controller.add(event);
     }
 
-    await Future.wait(List.generate(concurrency, (_) => worker()));
-    final results = found.toList()..sort();
-    return results;
+    controller.onCancel = () {
+      canceled = true;
+    };
+
+    controller.onListen = () {
+      () async {
+        final queue = ListQueue<String>.from(ips);
+        final found = <String>{};
+        var scanned = 0;
+        var devicesFound = 0;
+
+        Future<void> worker() async {
+          while (!canceled) {
+            if (queue.isEmpty) {
+              break;
+            }
+            final ip = queue.removeFirst();
+            final hasDevice = await _hasOpenPort(ip, ports: ports, timeout: timeout);
+            if (hasDevice) {
+              devicesFound += 1;
+            }
+            scanned += 1;
+            emit(TapoSubnetDeviceCountEvent(
+              devicesFound: devicesFound,
+              scanned: scanned,
+              total: ips.length,
+            ));
+            if (hasDevice) {
+              final isTapo = await _probeTapo(
+                ip,
+                ports: ports,
+                timeout: timeout,
+                warmupAttempts: warmupAttempts,
+                warmupDelay: warmupDelay,
+                probeAttempts: probeAttempts,
+                probeDelay: probeDelay,
+              );
+              if (isTapo) {
+                found.add(ip);
+                final snapshot = found.toList()..sort();
+                emit(TapoSubnetTapoCandidatesEvent(snapshot));
+              }
+            }
+          }
+        }
+
+        await Future.wait(List.generate(concurrency, (_) => worker()));
+        if (!canceled) {
+          final results = found.toList()..sort();
+          emit(TapoSubnetScanCompleteEvent(results));
+        }
+        if (!controller.isClosed) {
+          await controller.close();
+        }
+      }().catchError((Object error, StackTrace stackTrace) async {
+        canceled = true;
+        if (!controller.isClosed) {
+          controller.addError(error, stackTrace);
+          await controller.close();
+        }
+      });
+    };
+
+    return controller.stream;
   }
 
   static Future<bool> _probeTapo(
@@ -108,13 +184,22 @@ class TapoDeviceDiscovery {
     return false;
   }
 
-  static Future<void> _warmup(
-    String ip,
-    int port,
-    Duration timeout,
-    int attempts,
-    Duration delay,
-  ) async {
+  static Future<bool> _hasOpenPort(
+    String ip, {
+    required List<int> ports,
+    required Duration timeout,
+  }) async {
+    for (final port in ports) {
+      try {
+        final socket = await Socket.connect(ip, port, timeout: timeout);
+        socket.destroy();
+        return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  static Future<void> _warmup(String ip, int port, Duration timeout, int attempts, Duration delay) async {
     for (var attempt = 0; attempt < attempts; attempt += 1) {
       try {
         final socket = await Socket.connect(ip, port, timeout: timeout);

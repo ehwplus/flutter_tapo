@@ -99,11 +99,15 @@ for (final activity in data.activities()) {
 ### Device discovery
 
 ```dart
-final devices = await TapoDeviceDiscovery.scanSubnet(
-  base: '192.168.178',
-  onProgress: (scanned, total) => print('$scanned/$total'),
-);
-print(devices);
+await for (final event in TapoDeviceDiscovery.scanSubnet(base: '192.168.178')) {
+  if (event is TapoSubnetDeviceCountEvent) {
+    print('Found ${event.devicesFound} devices (${event.scanned}/${event.total})');
+  } else if (event is TapoSubnetTapoCandidatesEvent) {
+    print('Tapo candidates so far: ${event.candidates}');
+  } else if (event is TapoSubnetScanCompleteEvent) {
+    print('Final Tapo devices: ${event.devices}');
+  }
+}
 ```
 
 Check the `example` app for a full working flow.
