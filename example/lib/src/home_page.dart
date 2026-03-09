@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tapo/flutter_tapo.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -119,6 +121,8 @@ class _MyHomePageState extends State<HomePage> {
       port: deviceUri.hasPort ? deviceUri.port : (deviceUri.scheme == 'https' ? 443 : 80),
       useHttps: deviceUri.scheme == 'https',
       allowInsecureHttps: deviceUri.scheme == 'https',
+      useRawSocketForHandshake: true,
+      useRawSocketForKlapRequests: true,
     );
 
     try {
@@ -250,7 +254,58 @@ class _MyHomePageState extends State<HomePage> {
       _error = null;
     });
 
-    _scanSubscription = TapoDeviceDiscovery.scanSubnet(base: '192.168.178').listen(
+    // Get local network base by finding the device's own IP
+    String networkBase = '192.168.1'; // Default fallback
+    try {
+      final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
+      if (kDebugMode) {
+        print('[Network Detection] Found ${interfaces.length} network interfaces');
+      }
+      for (final interface in interfaces) {
+        if (kDebugMode) {
+          print('[Network Detection] Checking interface: ${interface.name}');
+        }
+        for (final addr in interface.addresses) {
+          final ip = addr.address;
+          if (kDebugMode) {
+            print('[Network Detection]   Address: $ip');
+          }
+          // Skip loopback
+          if (ip.startsWith('127.')) {
+            if (kDebugMode) {
+              print('[Network Detection]     Skipped (loopback)');
+            }
+            continue;
+          }
+          // Extract first three octets (e.g., "192.168.1.50" -> "192.168.1")
+          final parts = ip.split('.');
+          if (parts.length == 4) {
+            networkBase = '${parts[0]}.${parts[1]}.${parts[2]}';
+            if (kDebugMode) {
+              print('[Network Detection]     Selected network base: $networkBase');
+            }
+            break;
+          }
+        }
+        if (networkBase != '192.168.1') break; // Found a non-default network
+      }
+      if (kDebugMode) {
+        print('[Network Detection] Final network base: $networkBase');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[Network Detection] Error detecting network: $e');
+        print('[Network Detection] Using fallback network: $networkBase');
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _error = 'Scanning network $networkBase.0/24...';
+      });
+    }
+
+    _scanSubscription = TapoDeviceDiscovery.scanSubnet(base: networkBase).listen(
       (event) {
         if (!mounted) {
           return;
@@ -283,6 +338,7 @@ class _MyHomePageState extends State<HomePage> {
         }
         setState(() {
           _isScanning = false;
+          _error = null; // Clear the scanning message
         });
       },
     );
